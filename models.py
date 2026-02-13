@@ -10,6 +10,3 @@ class Task():
             return f"- [x] {self.id} {self.description}"
         else:
             return f"- [ ] {self.id} {self.description}"
-
-    def toggle_completed(self):
-        self.is_complete = not self.is_complete
