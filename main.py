@@ -2,7 +2,7 @@ from models import Task
 from manager import TodoManager
 
 if __name__ == '__main__':
-    manager = TodoManager()
+    manager = TodoManager.load_from_file()
 
     while True:
         print("\nMenu:\n(A)dd\n(L)ist\n(D)elete\nMark a task (C)omplete\n(Q)uit")
