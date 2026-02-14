@@ -17,7 +17,10 @@ if __name__ == '__main__':
             case "D":
                 try:
                     del_id = int(input("Please enter the id number of the task to delete"))
-                    manager.delete_task(del_id)
+                    if manager.delete_task(del_id):
+                        print(f"Task {del_id} has been deleted")
+                    else:
+                        print(f"Task {del_id} does not exist")
                 except ValueError:
                     print("Please type a number for the id")
                     continue

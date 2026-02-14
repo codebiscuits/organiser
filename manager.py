@@ -36,10 +36,14 @@ class TodoManager:
             print(task)
 
     def delete_task(self, task_id: int):
-        self.tasks = [
-            task for task in self.tasks if task.id != task_id
-        ]
-        self.save_to_file()
+        if task_id in [task.id for task in self.tasks]:
+            self.tasks = [
+                task for task in self.tasks if task.id != task_id
+            ]
+            self.save_to_file()
+            return True
+        else:
+            return False
 
     def toggle_task(self, task_id: int):
         for task in self.tasks:

@@ -7,9 +7,9 @@ class Task():
 
     def __repr__(self):
         if self.is_complete:
-            return f"- [x] {self.id} {self.description}"
+            return f"- [x] {self.id:<3} | {self.description:<20}"
         else:
-            return f"- [ ] {self.id} {self.description}"
+            return f"- [ ] {self.id:<3} | {self.description:<20}"
 
     def to_dict(self):
         return {
