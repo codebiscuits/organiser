@@ -12,6 +12,10 @@ class TodoManager:
     def get_all_tasks(self) -> list[Task]:
         return self.tasks
 
+    def print_tasks(self):
+        for task in self.tasks:
+            print(task)
+
     def delete_task(self, task_id: int):
         self.tasks = [
             task for task in self.tasks if task.id != task_id
@@ -20,4 +24,4 @@ class TodoManager:
     def toggle_task(self, task_id: int):
         for task in self.tasks:
             if task.id == task_id:
-                task.is_complete = not task.is_complete
+                task.toggle_complete()

@@ -6,14 +6,14 @@ if __name__ == '__main__':
 
     while True:
         print("\nMenu:\n(A)dd\n(L)ist\n(D)elete\nMark a task (C)omplete\n(Q)uit")
-        choice = input("Enter your choice (A/L/D/C/Q): ")
+        choice:str = input("Enter your choice (A/L/D/C/Q): ")
 
-        match choice:
+        match choice.upper():
             case "A":
-                desc = input("Please write a short description of the task")
+                desc = input("Please write a short description of the task: ")
                 manager.add_task(desc)
             case "L":
-                print(manager.get_all_tasks())
+                manager.print_tasks()
             case "D":
                 try:
                     del_id = int(input("Please enter the id number of the task to delete"))
@@ -24,5 +24,8 @@ if __name__ == '__main__':
             case "C":
                 done_id = int(input("Please enter the id number of the task to complete"))
                 manager.toggle_task(done_id)
+            case "Q":
+                print("Goodbye!")
+                break
             case _:
                 print("Please enter a valid choice")
