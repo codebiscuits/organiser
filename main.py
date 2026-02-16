@@ -16,7 +16,7 @@ if __name__ == '__main__':
                 manager.print_tasks()
             case "D":
                 try:
-                    del_id = int(input("Please enter the id number of the task to delete"))
+                    del_id = int(input("Please enter the id number of the task to delete: "))
                     if manager.delete_task(del_id):
                         print(f"Task {del_id} has been deleted")
                     else:
@@ -25,7 +25,7 @@ if __name__ == '__main__':
                     print("Please type a number for the id")
                     continue
             case "C":
-                done_id = int(input("Please enter the id number of the task to complete"))
+                done_id = int(input("Please enter the id number of the task to complete: "))
                 manager.toggle_task(done_id)
             case "Q":
                 print("Goodbye!")
