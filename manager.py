@@ -2,31 +2,27 @@ from models import Task
 from pathlib import Path
 import json
 
-tasks_path = Path("tasks.json")
-
 class TodoManager:
-    def __init__(self):
+    def __init__(self, file_path: str = "tasks.json"):
         self.id_counter = 0
         self.tasks = []
+        self.tasks_path = Path(file_path)
+        self._load_from_file()
 
-    @classmethod
-    def load_from_file(cls):
-        manager = cls()
-        if tasks_path.exists():
-            with tasks_path.open() as f:
+    def _load_from_file(self):
+        if self.tasks_path.exists():
+            with self.tasks_path.open() as f:
                 data = json.load(f)
-                manager.id_counter = data["id_counter"]
-                manager.tasks = [Task.from_dict(data) for data in data["tasks"]]
+                self.id_counter = data["id_counter"]
+                self.tasks = [Task.from_dict(data) for data in data["tasks"]]
         else:
-            manager.id_counter = 0
-            manager.tasks = []
-
-        return manager
+            self.id_counter = 0
+            self.tasks = []
 
     def add_task(self, description: str):
         self.id_counter += 1
         self.tasks.append(Task(self.id_counter, description))
-        self.save_to_file()
+        self._save_to_file()
 
     def get_all_tasks(self) -> list[Task]:
         return self.tasks
@@ -40,7 +36,7 @@ class TodoManager:
             self.tasks = [
                 task for task in self.tasks if task.id != task_id
             ]
-            self.save_to_file()
+            self._save_to_file()
             return True
         else:
             return False
@@ -49,14 +45,14 @@ class TodoManager:
         for task in self.tasks:
             if task.id == task_id:
                 task.toggle_complete()
-        self.save_to_file()
+        self._save_to_file()
 
-    def save_to_file(self):
+    def _save_to_file(self):
         task_data = [task.to_dict() for task in self.tasks]
         data = {
             "id_counter": self.id_counter,
             "tasks": task_data
         }
 
-        with tasks_path.open("w") as f:
+        with self.tasks_path.open("w") as f:
             json.dump(data, f)

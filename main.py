@@ -1,4 +1,3 @@
-from models import Task
 from manager import TodoManager
 
 if __name__ == '__main__':

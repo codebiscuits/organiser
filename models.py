@@ -51,6 +51,9 @@ class Task():
 
     def __eq__(self, other):
         """verifies whether two tasks are identical"""
+        if not isinstance(other, Task):
+            return False
+
         return (
             (self.id == other.id)
             and (other.is_complete == self.is_complete)
