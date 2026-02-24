@@ -8,15 +8,16 @@ def temp_manager(tmp_path: str):
 
 def test_add_task_increases_count(temp_manager):
     # Act
-    temp_manager.add_task("Test task")
+    temp_manager.add_task("Test task", 6, 5)
 
     # Assert
     assert len(temp_manager.tasks) == 1
     assert temp_manager.tasks[0].description == "Test task"
+    assert temp_manager.tasks[0].priority == 30
 
 def test_persistence(tmp_path: str):
     mgr1 = TodoManager(f"{tmp_path}/tasks1.json")
-    mgr1.add_task("Test task persistence")
+    mgr1.add_task("Test task persistence",3, 3)
 
     mgr2 = TodoManager(f"{tmp_path}/tasks1.json")
     print(f"temp path: {tmp_path}")

@@ -19,16 +19,16 @@ class TodoManager:
             self.id_counter = 0
             self.tasks = []
 
-    def add_task(self, description: str):
+    def add_task(self, description: str, impact: int, urgency: int):
         self.id_counter += 1
-        self.tasks.append(Task(self.id_counter, description))
+        self.tasks.append(Task(self.id_counter, description, impact, urgency))
         self._save_to_file()
 
     def get_all_tasks(self) -> list[Task]:
-        return self.tasks
+        return sorted(self.tasks, key=lambda t: t.priority, reverse=True)
 
     def print_tasks(self):
-        for task in self.tasks:
+        for task in self.get_all_tasks():
             print(task)
 
     def delete_task(self, task_id: int):

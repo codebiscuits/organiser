@@ -2,20 +2,35 @@ from datetime import datetime
 
 class Task():
 
-    def __init__(self, id: int, description: str):
+    def __init__(
+            self,
+            id: int,
+            description: str,
+            impact: int = 5,
+            urgency: int = 5
+    ):
         self.id = id
         self.description = description
         self.is_complete = False
         self.created_at = datetime.now()
         self.completed_at = None
+        self.impact = max(1, min(10, impact))
+        self.urgency = max(1, min(10, urgency))
 
     def __repr__(self):
         created_at = self.created_at.strftime("%Y-%m-%d %H:%M")
         if self.is_complete:
             completed_at = self.completed_at.strftime("%Y-%m-%d %H:%M")
-            return f"- [x] {self.id:<3} | {self.description:<20} | Created: {created_at} | Completed: {completed_at}"
+            return (f"- [x] {self.id:<3} | {self.description:<20} | "
+                    f"Priority: {self.priority}% | Created: {created_at} | "
+                    f"Completed: {completed_at}")
         else:
-            return f"- [ ] {self.id:<3} | {self.description:<20} | Created: {created_at}"
+            return (f"- [ ] {self.id:<3} | {self.description:<20} | "
+                    f"Priority: {self.priority}% | Created: {created_at}")
+
+    @property
+    def priority(self):
+        return self.impact * self.urgency
 
     def to_dict(self):
         if self.is_complete:
@@ -28,6 +43,8 @@ class Task():
             "is_complete": self.is_complete,
             "created_at": self.created_at.isoformat(),
             "completed_at": completed_at,
+            "impact": self.impact,
+            "urgency": self.urgency
         }
 
     @staticmethod
@@ -36,9 +53,12 @@ class Task():
         old_task.is_complete = data["is_complete"]
         old_task.created_at = datetime.fromisoformat(data["created_at"])
         if data["is_complete"]:
-            old_task.completed_at = datetime.fromisoformat(data["completed_at"]) or None
+            old_task.completed_at = datetime.fromisoformat(data["completed_at"])
         else:
             old_task.completed_at = None
+        old_task.impact = data["impact"]
+        old_task.urgency = data["urgency"]
+
         return old_task
 
 

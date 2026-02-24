@@ -10,7 +10,12 @@ if __name__ == '__main__':
         match choice.upper():
             case "A":
                 desc = input("Please write a short description of the task: ")
-                manager.add_task(desc)
+                try:
+                    imp = int(input("Rate the importance of this task (1-10):"))
+                    urg = int(input("Rate the urgency of this task (1-10):"))
+                except ValueError:
+                    print("Please type a number between 1 and 10")
+                manager.add_task(desc, imp, urg)
             case "L":
                 manager.print_tasks()
             case "D":

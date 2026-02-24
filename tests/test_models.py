@@ -40,3 +40,13 @@ def test_serialisation_round_trip():
     # Assert
     assert t3 == t
     assert t4 == t2
+
+def test_impact_urgency_bounds():
+    t = Task(1, "Test impact/urgency bounds", 5, 5)
+    assert t.priority == 25
+
+    t3 = Task(1, "Test impact/urgency bounds", 11, 11)
+    assert t3.priority == 100
+
+    t4 = Task(1, "Test impact/urgency bounds", -1, -1)
+    assert t4.priority == 1
