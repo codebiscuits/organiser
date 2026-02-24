@@ -1,7 +1,7 @@
 from manager import TodoManager
 
 if __name__ == '__main__':
-    manager = TodoManager.load_from_file()
+    manager = TodoManager()
 
     while True:
         print("\nMenu:\n(A)dd\n(L)ist\n(D)elete\nMark a task (C)omplete\n(Q)uit")
