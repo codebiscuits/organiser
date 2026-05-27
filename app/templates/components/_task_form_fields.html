@@ -1,0 +1,184 @@
+{# 
+Reusable task form fields partial.
+Used by both the main task creation modal and admin task form.
+
+Required Alpine.js variables in parent scope:
+- form: object with all task fields
+- selectedDays: array for weekly day selection
+- showUrgency(): function returning boolean
+- showAllowAfternoon(): function returning boolean
+
+Optional:
+- task: existing task object for edit mode (Jinja2 variable)
+- recurrence: existing recurrence object for edit mode (Jinja2 variable)
+- useFormNames: if true, adds name="" attributes for traditional form POST
+#}
+
+<!-- Task Type Selection -->
+<div class="form-group">
+    <label for="type">Task Type</label>
+    <select id="type" x-model="form.type" {% if useFormNames %}name="type"{% endif %} required>
+        <option value="">Select type...</option>
+        <option value="errand">One-off Errand</option>
+        <option value="appointment">Appointment</option>
+        <option value="deadline">Deadline</option>
+        <option value="recurring">Recurring Task</option>
+        <option value="variable_recurring">Variable Recurring</option>
+        <option value="workout">Workout</option>
+    </select>
+</div>
+
+<!-- Common Fields -->
+<div class="form-group">
+    <label for="title">Title</label>
+    <input type="text" id="title" x-model="form.title" {% if useFormNames %}name="title"{% endif %} required placeholder="Task title">
+</div>
+
+<div class="form-group">
+    <label for="estimated_duration">Estimated Duration (minutes)</label>
+    <input type="number" id="estimated_duration" x-model.number="form.estimated_duration" 
+           {% if useFormNames %}name="estimated_duration"{% endif %} min="1" placeholder="e.g., 30">
+</div>
+
+<div class="form-group">
+    <label for="importance">Importance</label>
+    <select id="importance" x-model.number="form.importance" {% if useFormNames %}name="importance"{% endif %} required>
+        <option value="1">1 - Low</option>
+        <option value="2">2 - Medium</option>
+        <option value="3">3 - High</option>
+    </select>
+</div>
+
+<!-- Urgency (for errand, recurring, variable_recurring, workout) -->
+<div class="form-group" x-show="showUrgency()">
+    <label for="urgency">Urgency</label>
+    <select id="urgency" x-model.number="form.urgency" {% if useFormNames %}name="urgency"{% endif %} :required="showUrgency()">
+        <option value="1">1 - Low</option>
+        <option value="2">2 - Medium</option>
+        <option value="3">3 - High</option>
+    </select>
+</div>
+
+<!-- Allow Afternoon (for errand, recurring, variable_recurring) -->
+<div class="form-group checkbox-group" x-show="showAllowAfternoon()">
+    <label>
+        <input type="checkbox" x-model="form.allow_afternoon" {% if useFormNames %}name="allow_afternoon" value="true"{% endif %}>
+        Allow afternoon scheduling (3pm-6pm)
+    </label>
+</div>
+
+<!-- Appointment Fields -->
+<template x-if="form.type === 'appointment'">
+    <div class="type-specific-fields">
+        <div class="form-group">
+            <label for="scheduled_at">Scheduled Date & Time</label>
+            <input type="datetime-local" id="scheduled_at" x-model="form.scheduled_at" 
+                   {% if useFormNames %}name="scheduled_at"{% endif %} required>
+        </div>
+        
+        <div class="form-group">
+            <label for="prep_duration">Prep/Travel Time (minutes)</label>
+            <input type="number" id="prep_duration" x-model.number="form.prep_duration" 
+                   {% if useFormNames %}name="prep_duration"{% endif %} min="0" placeholder="e.g., 15">
+            <span class="form-hint">A prep task will be auto-generated before the appointment</span>
+        </div>
+        
+        <div class="form-group">
+            <label for="location">Location (optional)</label>
+            <input type="text" id="location" x-model="form.location" 
+                   {% if useFormNames %}name="location"{% endif %} placeholder="e.g., Doctor's office">
+        </div>
+    </div>
+</template>
+
+<!-- Deadline Fields -->
+<template x-if="form.type === 'deadline'">
+    <div class="type-specific-fields">
+        <div class="form-group">
+            <label for="deadline_at">Deadline Date & Time</label>
+            <input type="datetime-local" id="deadline_at" x-model="form.deadline_at" 
+                   {% if useFormNames %}name="deadline_at"{% endif %} required>
+        </div>
+        <span class="form-hint">Urgency is calculated automatically based on time remaining</span>
+    </div>
+</template>
+
+<!-- Recurring/Variable Recurring/Workout Fields -->
+<template x-if="form.type === 'recurring' || form.type === 'variable_recurring' || form.type === 'workout'">
+    <div class="type-specific-fields">
+        <div class="form-group">
+            <label for="interval_type">Recurrence Interval</label>
+            <select id="interval_type" x-model="form.recurrence.interval_type" 
+                    {% if useFormNames %}name="interval_type"{% endif %} required>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="interval_multiple">Every X intervals</label>
+            <input type="number" id="interval_multiple" x-model.number="form.recurrence.interval_multiple" 
+                   {% if useFormNames %}name="interval_multiple"{% endif %} min="1" value="1">
+            <span class="form-hint">e.g., 2 = every 2 days/weeks/months</span>
+        </div>
+
+        <!-- Weekly: day of week selection -->
+        <div class="form-group" x-show="form.recurrence.interval_type === 'weekly'">
+            <label>Days of Week</label>
+            <div class="checkbox-grid">
+                <label><input type="checkbox" value="0" x-model="selectedDays" {% if useFormNames %}name="day_of_week"{% endif %}> Sun</label>
+                <label><input type="checkbox" value="1" x-model="selectedDays" {% if useFormNames %}name="day_of_week"{% endif %}> Mon</label>
+                <label><input type="checkbox" value="2" x-model="selectedDays" {% if useFormNames %}name="day_of_week"{% endif %}> Tue</label>
+                <label><input type="checkbox" value="3" x-model="selectedDays" {% if useFormNames %}name="day_of_week"{% endif %}> Wed</label>
+                <label><input type="checkbox" value="4" x-model="selectedDays" {% if useFormNames %}name="day_of_week"{% endif %}> Thu</label>
+                <label><input type="checkbox" value="5" x-model="selectedDays" {% if useFormNames %}name="day_of_week"{% endif %}> Fri</label>
+                <label><input type="checkbox" value="6" x-model="selectedDays" {% if useFormNames %}name="day_of_week"{% endif %}> Sat</label>
+            </div>
+        </div>
+
+        <!-- Monthly: day of month -->
+        <div class="form-group" x-show="form.recurrence.interval_type === 'monthly'">
+            <label for="day_of_month">Days of Month (comma-separated)</label>
+            <input type="text" id="day_of_month" x-model="form.recurrence.day_of_month" 
+                   {% if useFormNames %}name="day_of_month"{% endif %} placeholder="e.g., 1,15">
+        </div>
+
+        <!-- Yearly: month selection -->
+        <div class="form-group" x-show="form.recurrence.interval_type === 'yearly'">
+            <label for="month_of_year">Months (comma-separated, 1-12)</label>
+            <input type="text" id="month_of_year" x-model="form.recurrence.month_of_year" 
+                   {% if useFormNames %}name="month_of_year"{% endif %} placeholder="e.g., 1,6">
+        </div>
+
+        <div class="form-group">
+            <label for="start_date">Start Date</label>
+            <input type="date" id="start_date" x-model="form.recurrence.start_date" 
+                   {% if useFormNames %}name="start_date"{% endif %}>
+        </div>
+
+        <div class="form-group">
+            <label for="end_date">End Date (optional)</label>
+            <input type="date" id="end_date" x-model="form.recurrence.end_date" 
+                   {% if useFormNames %}name="end_date"{% endif %}>
+        </div>
+
+        <div class="form-group">
+            <label for="scheduled_time">Fixed Time (optional)</label>
+            <input type="time" id="scheduled_time" x-model="form.scheduled_time" 
+                   {% if useFormNames %}name="scheduled_time"{% endif %}>
+            <span class="form-hint">If set, this task will be scheduled at this exact time each day</span>
+        </div>
+
+        <template x-if="form.type === 'variable_recurring'">
+            <span class="form-hint">After completion, you'll be prompted for when this should next occur</span>
+        </template>
+    </div>
+</template>
+
+<!-- Notes (all types) -->
+<div class="form-group">
+    <label for="notes">Notes (optional)</label>
+    <textarea id="notes" x-model="form.notes" {% if useFormNames %}name="notes"{% endif %} rows="3" placeholder="Additional details..."></textarea>
+</div>

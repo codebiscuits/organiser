@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}Workout History - Admin{% endblock %}
+
+{% block content %}
+<section class="admin-dashboard">
+    <h2>Workout History</h2>
+    
+    <details class="admin-form-section">
+        <summary><strong>Add Workout Entry</strong></summary>
+        <form action="/admin/workout-history/add" method="post" class="admin-form" style="margin-top: 1rem;">
+            <div class="form-group">
+                <label for="exercise_id">Exercise</label>
+                <select name="exercise_id" id="exercise_id" required>
+                    <option value="">-- Select Exercise --</option>
+                    {% for exercise in exercises %}
+                    <option value="{{ exercise.id }}">{{ exercise.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="performed_date">Date</label>
+                <input type="date" name="performed_date" id="performed_date" required value="{{ today }}">
+            </div>
+            <div class="form-group">
+                <label for="performed_time">Time (optional)</label>
+                <input type="time" name="performed_time" id="performed_time">
+            </div>
+            <div class="form-group">
+                <label for="num_sets">Sets</label>
+                <input type="number" name="num_sets" id="num_sets" min="1" required value="3">
+            </div>
+            <div class="form-group">
+                <label for="reps">Reps</label>
+                <input type="number" name="reps" id="reps" min="1" required value="10">
+            </div>
+            <div class="form-group">
+                <label for="weight_kg">Weight (kg)</label>
+                <input type="number" name="weight_kg" id="weight_kg" step="0.5" min="0" required value="0">
+            </div>
+            <div class="form-group">
+                <label for="intensity">Intensity</label>
+                <select name="intensity" id="intensity" required>
+                    <option value="heavy">Heavy</option>
+                    <option value="light">Light</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary">Add Entry</button>
+        </form>
+    </details>
+    
+    {% for date, sets in grouped_sets.items() %}
+    <div class="workout-day">
+        <h3>{{ date }}</h3>
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th style="width: 40%;">Exercise</th>
+                    <th>Sets</th>
+                    <th>Reps</th>
+                    <th>Weight (kg)</th>
+                    <th>Intensity</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in sets %}
+                <tr id="workout-entry-{{ item.id }}">
+                    <td>{{ item.created_at.strftime('%H:%M') if item.created_at else '' }}</td>
+                    <td>{{ item.exercise_name }}</td>
+                    <td>{{ item.num_sets }}</td>
+                    <td>{{ item.reps }}</td>
+                    <td>{{ item.weight_kg | int }}</td>
+                    <td>{{ item.intensity or '' }}</td>
+                    <td class="entry-actions">
+                        <button class="btn-action" hx-get="/admin/workout-history/{{ item.id }}/edit" hx-target="#workout-entry-{{ item.id }}" hx-swap="outerHTML">Edit</button>
+                        <button class="btn-action btn-action-danger" hx-delete="/admin/workout-history/{{ item.id }}" hx-target="#workout-entry-{{ item.id }}" hx-swap="outerHTML" hx-confirm="Delete this entry?">Delete</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p>No workout history found.</p>
+    {% endfor %}
+    
+    <p><a href="/admin">&larr; Back to Admin</a></p>
+</section>
+
+<style>
+.entry-actions {
+    white-space: nowrap;
+}
+
+.btn-action {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.875rem;
+    padding: 0;
+    margin-right: 0.5rem;
+    vertical-align: baseline;
+    line-height: inherit;
+}
+
+.btn-action:last-child {
+    margin-right: 0;
+}
+
+.btn-action:hover {
+    color: var(--accent);
+}
+
+.btn-action-danger:hover {
+    color: var(--danger, #e74c3c);
+}
+</style>
+{% endblock %}

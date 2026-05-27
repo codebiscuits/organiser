@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+.env
+app/templates/base.sync-conflict-*.html

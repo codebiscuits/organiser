@@ -1,0 +1,80 @@
+{% if capacity and capacity.total_candidate_time > capacity.main_available + capacity.afternoon_available %}
+<div class="capacity-warning">
+    ⚠ Today is over capacity — {{ capacity.total_candidate_time }} min of tasks, {{ capacity.main_available + capacity.afternoon_available }} min available.
+</div>
+{% endif %}
+{% if tasks %}
+    {% for pt in tasks %}
+    <article class="task-card-mini" data-task-id="{{ pt.task.id }}">
+        <div class="mini-content">
+            <div class="mini-header">
+                <span class="mini-title">
+                    {% if pt.task.type == 'workout' and pt.selected_exercise %}
+                        Workout: {{ pt.selected_exercise }}
+                    {% else %}
+                        {{ pt.task.title }}
+                    {% endif %}
+                </span>
+                <span class="mini-duration">{{ pt.task.estimated_duration }}m</span>
+            </div>
+            {% if pt.scheduled_time %}
+            <span class="mini-time">{{ pt.scheduled_time.strftime('%H:%M') }}</span>
+            {% endif %}
+        </div>
+        <div class="mini-actions">
+            {% if pt.task.type == 'workout' %}
+            <button
+                class="btn-mini btn-done"
+                hx-get="/tasks/{{ pt.task.id }}/complete/workout"
+                hx-trigger="click"
+                hx-target="body"
+                hx-swap="beforeend"
+                title="Done"
+            >✓</button>
+            {% elif pt.task.type == 'variable_recurring' %}
+            <button
+                class="btn-mini btn-done"
+                hx-get="/tasks/{{ pt.task.id }}/complete/variable"
+                hx-trigger="click"
+                hx-target="body"
+                hx-swap="beforeend"
+                title="Done"
+            >✓</button>
+            {% else %}
+            <button
+                class="btn-mini btn-done"
+                hx-post="/tasks/{{ pt.task.id }}/complete"
+                hx-trigger="click"
+                hx-swap="none"
+                title="Done"
+            >✓</button>
+            {% endif %}
+            <button 
+                class="btn-mini btn-defer"
+                hx-post="/tasks/{{ pt.task.id }}/defer"
+                hx-trigger="click"
+                hx-swap="none"
+                title="Defer"
+            >⏱</button>
+            <button 
+                class="btn-mini btn-edit"
+                hx-get="/tasks/{{ pt.task.id }}/edit"
+                hx-trigger="click"
+                hx-target="body"
+                hx-swap="beforeend"
+                title="Edit"
+            >✎</button>
+            <button 
+                class="btn-mini btn-delete"
+                hx-delete="/tasks/{{ pt.task.id }}"
+                hx-trigger="click"
+                hx-swap="none"
+                hx-confirm="Delete '{{ pt.task.title }}'?"
+                title="Delete"
+            >✕</button>
+        </div>
+    </article>
+    {% endfor %}
+{% else %}
+    <p class="no-upcoming">Nothing else scheduled</p>
+{% endif %}

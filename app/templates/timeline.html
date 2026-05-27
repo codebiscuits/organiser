@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+
+{% block title %}Today's Timeline - Life Organiser{% endblock %}
+
+{% block content %}
+<div class="timeline-page" x-data="timeline()">
+    <div class="timeline-header">
+        <h2>Today's Schedule</h2>
+        <p class="timeline-date">{{ today.strftime('%A, %B %d') }}</p>
+    </div>
+
+    <div class="timeline-container">
+        <!-- Time markers -->
+        <div class="time-markers">
+            {% for hour in range(9, 24) %}
+            <div class="time-marker" style="top: {{ (hour - 9) * 60 }}px;">
+                <span class="time-label">{{ '%02d:00' % hour }}</span>
+                <div class="marker-line"></div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Window indicators -->
+        <div class="window-indicators">
+            <div class="window-band main-window" style="top: 0; height: 360px;">
+                <span class="window-label">Main</span>
+            </div>
+            <div class="window-band afternoon-window" style="top: 360px; height: 180px;">
+                <span class="window-label">Afternoon</span>
+            </div>
+            <div class="window-band evening-window" style="top: 540px; height: 300px;">
+                <span class="window-label">Evening</span>
+            </div>
+        </div>
+
+        <!-- Draggable task cards -->
+        <div class="timeline-tasks" 
+             id="timeline-tasks"
+             @dragover.prevent
+             @drop="handleDrop($event)">
+            {% for pt in tasks %}
+            <div class="timeline-task-card {% if pt.is_fixed %}fixed{% endif %}"
+                 data-task-id="{{ pt.task.id }}"
+                 data-duration="{{ pt.task.estimated_duration or 30 }}"
+                 data-is-fixed="{{ 'true' if pt.is_fixed else 'false' }}"
+                 draggable="{{ 'false' if pt.is_fixed else 'true' }}"
+                 @dragstart="handleDragStart($event)"
+                 @dragend="handleDragEnd($event)"
+                 style="top: {{ ((pt.scheduled_time.hour - 9) * 60 + pt.scheduled_time.minute) if pt.scheduled_time else 0 }}px; 
+                        height: {{ pt.task.estimated_duration or 30 }}px;">
+                <div class="task-card-content">
+                    <span class="task-title">{{ pt.task.title }}</span>
+                    <span class="task-time">
+                        {% if pt.scheduled_time %}
+                        {{ pt.scheduled_time.strftime('%H:%M') }}
+                        {% endif %}
+                        <span class="task-duration">({{ pt.task.estimated_duration or 30 }}m)</span>
+                    </span>
+                </div>
+                {% if pt.is_fixed %}
+                <span class="fixed-badge" title="Fixed time - cannot be moved">📌</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Save changes button -->
+    <div class="timeline-actions" x-show="hasChanges">
+        <button class="btn-save-timeline" @click="saveOrder()">
+            Save Changes
+        </button>
+        <button class="btn-cancel-timeline" @click="resetOrder()">
+            Cancel
+        </button>
+    </div>
+
+    <!-- Drop indicator -->
+    <div class="drop-indicator" x-ref="dropIndicator" style="display: none;"></div>
+</div>
+
+<script>
+document.addEventListener('alpine:init', () => {
+    Alpine.data('timeline', () => ({
+        hasChanges: false,
+        originalOrder: [],
+        draggedElement: null,
+        
+        init() {
+            this.captureOriginalOrder();
+        },
+        
+        captureOriginalOrder() {
+            const cards = document.querySelectorAll('.timeline-task-card:not(.fixed)');
+            this.originalOrder = Array.from(cards).map(card => ({
+                id: card.dataset.taskId,
+                top: parseInt(card.style.top) || 0
+            }));
+        },
+        
+        handleDragStart(event) {
+            if (event.target.dataset.isFixed === 'true') {
+                event.preventDefault();
+                return;
+            }
+            this.draggedElement = event.target;
+            event.target.classList.add('dragging');
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', event.target.dataset.taskId);
+        },
+        
+        handleDragEnd(event) {
+            event.target.classList.remove('dragging');
+            this.draggedElement = null;
+            this.$refs.dropIndicator.style.display = 'none';
+        },
+        
+        handleDrop(event) {
+            if (!this.draggedElement) return;
+            
+            const container = document.getElementById('timeline-tasks');
+            const rect = container.getBoundingClientRect();
+            const y = event.clientY - rect.top;
+            
+            // Snap to 15-minute increments
+            const snappedMinutes = Math.round(y / 15) * 15;
+            const snappedY = Math.max(0, Math.min(snappedMinutes, 840)); // 840 = 14 hours * 60
+            
+            this.draggedElement.style.top = snappedY + 'px';
+            
+            // Update scheduled time display
+            const hour = Math.floor(snappedY / 60) + 9;
+            const minute = snappedY % 60;
+            const timeSpan = this.draggedElement.querySelector('.task-time');
+            const durationSpan = this.draggedElement.querySelector('.task-duration');
+            const durationText = durationSpan ? durationSpan.outerHTML : '';
+            timeSpan.innerHTML = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${durationText}`;
+            
+            this.hasChanges = true;
+            this.reorderCards();
+        },
+        
+        reorderCards() {
+            const container = document.getElementById('timeline-tasks');
+            const cards = Array.from(container.querySelectorAll('.timeline-task-card'));
+            
+            // Check for overlaps and resolve them
+            cards.sort((a, b) => parseInt(a.style.top) - parseInt(b.style.top));
+            
+            let cursor = 0;
+            for (const card of cards) {
+                const cardTop = parseInt(card.style.top) || 0;
+                const duration = parseInt(card.dataset.duration) || 30;
+                
+                if (card.dataset.isFixed === 'true') {
+                    // Fixed cards stay where they are, move cursor past them
+                    cursor = Math.max(cursor, cardTop + duration);
+                    continue;
+                }
+                
+                // If this card overlaps with cursor, push it down
+                if (cardTop < cursor) {
+                    card.style.top = cursor + 'px';
+                    // Update time display
+                    const hour = Math.floor(cursor / 60) + 9;
+                    const minute = cursor % 60;
+                    const timeSpan = card.querySelector('.task-time');
+                    const durationSpan = card.querySelector('.task-duration');
+                    const durationText = durationSpan ? durationSpan.outerHTML : '';
+                    timeSpan.innerHTML = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${durationText}`;
+                }
+                
+                cursor = parseInt(card.style.top) + duration;
+            }
+        },
+        
+        async saveOrder() {
+            const cards = document.querySelectorAll('.timeline-task-card:not(.fixed)');
+            const order = Array.from(cards).map(card => {
+                const top = parseInt(card.style.top) || 0;
+                const hour = Math.floor(top / 60) + 9;
+                const minute = top % 60;
+                return {
+                    task_id: card.dataset.taskId,
+                    scheduled_hour: hour,
+                    scheduled_minute: minute
+                };
+            });
+            
+            try {
+                const response = await fetch('/tasks/timeline/reorder', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ tasks: order })
+                });
+                
+                if (response.ok) {
+                    this.hasChanges = false;
+                    this.captureOriginalOrder();
+                    // Trigger update on main tasks page
+                    document.body.dispatchEvent(new CustomEvent('taskUpdated'));
+                } else {
+                    alert('Failed to save changes');
+                }
+            } catch (error) {
+                console.error('Error saving order:', error);
+                alert('Failed to save changes');
+            }
+        },
+        
+        resetOrder() {
+            for (const item of this.originalOrder) {
+                const card = document.querySelector(`[data-task-id="${item.id}"]`);
+                if (card) {
+                    card.style.top = item.top + 'px';
+                    // Restore time display
+                    const hour = Math.floor(item.top / 60) + 9;
+                    const minute = item.top % 60;
+                    const timeSpan = card.querySelector('.task-time');
+                    const durationSpan = card.querySelector('.task-duration');
+                    const durationText = durationSpan ? durationSpan.outerHTML : '';
+                    timeSpan.innerHTML = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${durationText}`;
+                }
+            }
+            this.hasChanges = false;
+        }
+    }));
+});
+</script>
+{% endblock %}

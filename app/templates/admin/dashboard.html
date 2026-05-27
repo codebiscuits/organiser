@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Admin - Life Organiser{% endblock %}
+
+{% block content %}
+<section class="admin-dashboard">
+    <h2>Admin Panel</h2>
+    
+    <nav class="admin-nav">
+        <a href="/admin/tasks" class="admin-card">
+            <h3>Tasks</h3>
+            <p>Manage all tasks, recurrence rules, and projections</p>
+        </a>
+        
+        <a href="/admin/exercises" class="admin-card">
+            <h3>Exercises</h3>
+            <p>Manage exercises and muscle group mappings</p>
+        </a>
+        
+        <a href="/admin/muscle-groups" class="admin-card">
+            <h3>Muscle Groups</h3>
+            <p>Manage muscle groups and recovery times</p>
+        </a>
+        
+        <a href="/admin/workout-history" class="admin-card">
+            <h3>Workout History</h3>
+            <p>View completed workouts and progress</p>
+        </a>
+        
+        <a href="/admin/completed-tasks" class="admin-card">
+            <h3>Completed Tasks</h3>
+            <p>View task completion history</p>
+        </a>
+        
+        <a href="/admin/user" class="admin-card">
+            <h3>User Preferences</h3>
+            <p>Manage email, available hours, and notifications</p>
+        </a>
+    </nav>
+    
+    <section class="admin-actions">
+        <h3>Maintenance</h3>
+        <button class="btn-action" 
+                hx-post="/admin/refresh-projections" 
+                hx-swap="none"
+                hx-confirm="Regenerate all future projections? This will fix any day-of-week issues."
+                onclick="this.disabled=true; this.textContent='Refreshing...'; setTimeout(() => { this.disabled=false; this.textContent='Refresh Projections'; alert('Projections refreshed!'); }, 1000)">
+            Refresh Projections
+        </button>
+        <p class="action-desc">Regenerate recurring task projections for the next 3 months</p>
+    </section>
+</section>
+{% endblock %}

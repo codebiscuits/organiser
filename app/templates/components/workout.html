@@ -1,0 +1,44 @@
+<div class="workout-container">
+    <h2>Today's Workout</h2>
+    
+    {% if exercises %}
+    <form hx-post="/workouts/log" hx-target="#workout-result">
+        {% for exercise in exercises %}
+        <article class="exercise-card">
+            <h3>{{ exercise.name }}</h3>
+            {% if exercise.description %}
+            <p>{{ exercise.description }}</p>
+            {% endif %}
+            
+            <div class="exercise-inputs">
+                <label>
+                    Sets
+                    <input type="number" name="sets_{{ exercise.id }}" min="1" value="3">
+                </label>
+                <label>
+                    Reps
+                    <input type="number" name="reps_{{ exercise.id }}" min="1" value="10">
+                </label>
+                <label>
+                    Weight (kg)
+                    <input type="number" name="weight_{{ exercise.id }}" min="0" step="0.5" value="0">
+                </label>
+                <label>
+                    Intensity
+                    <select name="intensity_{{ exercise.id }}">
+                        <option value="heavy">Heavy</option>
+                        <option value="light">Light</option>
+                    </select>
+                </label>
+            </div>
+        </article>
+        {% endfor %}
+        
+        <button type="submit" class="btn-complete">Log Workout</button>
+    </form>
+    {% else %}
+    <p>No exercises configured. Add exercises in the admin panel.</p>
+    {% endif %}
+    
+    <div id="workout-result"></div>
+</div>

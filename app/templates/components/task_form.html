@@ -1,0 +1,121 @@
+<div class="modal-overlay" x-data="{
+    submitting: false,
+    selectedDays: [],
+    form: {
+        type: '',
+        title: '',
+        notes: '',
+        estimated_duration: null,
+        importance: 2,
+        urgency: 2,
+        allow_afternoon: false,
+        deadline_at: null,
+        scheduled_at: null,
+        prep_duration: null,
+        scheduled_time: null,
+        location: '',
+        recurrence: {
+            interval_type: 'daily',
+            interval_multiple: 1,
+            day_of_week: null,
+            day_of_month: null,
+            month_of_year: null,
+            start_date: null,
+            end_date: null
+        }
+    },
+    showUrgency() {
+        return ['errand', 'recurring', 'variable_recurring', 'workout'].includes(this.form.type);
+    },
+    showAllowAfternoon() {
+        return ['errand', 'recurring', 'variable_recurring', 'workout'].includes(this.form.type);
+    },
+    closeModal() {
+        document.getElementById('modal-container').innerHTML = '';
+    },
+    async submitForm() {
+        this.submitting = true;
+        const payload = {
+            type: this.form.type,
+            title: this.form.title,
+            notes: this.form.notes || null,
+            estimated_duration: this.form.estimated_duration,
+            importance: this.form.importance,
+            allow_afternoon: this.form.allow_afternoon
+        };
+        if (this.showUrgency()) {
+            payload.urgency = this.form.urgency;
+        }
+        if (this.form.type === 'appointment') {
+            payload.scheduled_at = this.form.scheduled_at;
+            payload.prep_duration = this.form.prep_duration;
+            payload.location = this.form.location || null;
+        }
+        if (this.form.type === 'deadline') {
+            payload.deadline_at = this.form.deadline_at;
+        }
+        if (this.form.type === 'recurring' || this.form.type === 'variable_recurring' || this.form.type === 'workout') {
+            payload.recurrence = {
+                interval_type: this.form.recurrence.interval_type,
+                interval_multiple: this.form.recurrence.interval_multiple || 1
+            };
+            if (this.form.recurrence.interval_type === 'weekly' && this.selectedDays.length > 0) {
+                payload.recurrence.day_of_week = this.selectedDays.sort().join(',');
+            }
+            if (this.form.recurrence.interval_type === 'monthly' && this.form.recurrence.day_of_month) {
+                payload.recurrence.day_of_month = this.form.recurrence.day_of_month;
+            }
+            if (this.form.recurrence.interval_type === 'yearly' && this.form.recurrence.month_of_year) {
+                payload.recurrence.month_of_year = this.form.recurrence.month_of_year;
+            }
+            if (this.form.recurrence.start_date) {
+                payload.recurrence.start_date = this.form.recurrence.start_date + 'T00:00:00';
+            }
+            if (this.form.recurrence.end_date) {
+                payload.recurrence.end_date = this.form.recurrence.end_date + 'T00:00:00';
+            }
+            if (this.form.scheduled_time) {
+                payload.scheduled_time = this.form.scheduled_time;
+            }
+        }
+        try {
+            const response = await fetch('/tasks/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (response.ok) {
+                this.closeModal();
+                htmx.trigger(document.body, 'taskUpdated');
+            } else {
+                const error = await response.json();
+                alert('Error creating task: ' + (error.detail || 'Unknown error'));
+            }
+        } catch (err) {
+            alert('Error creating task: ' + err.message);
+        } finally {
+            this.submitting = false;
+        }
+    }
+}" @click.self="closeModal()">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Add New Task</h2>
+            <button class="modal-close" @click="closeModal()">&times;</button>
+        </div>
+        
+        <form @submit.prevent="submitForm()" class="task-form">
+            {% set useFormNames = false %}
+            {% include "components/_task_form_fields.html" %}
+
+            <!-- Submit -->
+            <div class="form-actions">
+                <button type="button" class="btn-cancel" @click="closeModal()">Cancel</button>
+                <button type="submit" class="btn-submit" :disabled="submitting">
+                    <span x-show="!submitting">Create Task</span>
+                    <span x-show="submitting">Creating...</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>

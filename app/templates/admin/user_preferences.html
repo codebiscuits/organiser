@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}User Preferences - Life Organiser{% endblock %}
+
+{% block content %}
+<section class="admin-dashboard">
+    <h2>User Preferences</h2>
+    
+    <form class="task-form" method="post" action="/admin/user">
+        <div class="form-group">
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" value="{{ user.email or '' }}" placeholder="your@email.com">
+            <span class="form-hint">Used for notifications</span>
+        </div>
+        
+        <div class="form-group">
+            <label for="available_hours_per_day">Available Hours Per Day</label>
+            <input type="number" id="available_hours_per_day" name="available_hours_per_day" 
+                   value="{{ user.available_hours_per_day or 6 }}" min="1" max="24" step="1">
+            <span class="form-hint">Used for deadline urgency calculations</span>
+        </div>
+        
+        <div class="form-group">
+            <label>Push Notifications</label>
+            <input type="text" readonly 
+                   value="{% if user.push_subscription %}Subscribed{% else %}Not subscribed{% endif %}"
+                   style="opacity: 0.7; cursor: not-allowed;">
+            <span class="form-hint">Manage push notifications from browser settings</span>
+        </div>
+        
+        <div class="form-actions">
+            <a href="/admin" class="btn-cancel">Cancel</a>
+            <button type="submit" class="btn-submit">Save Preferences</button>
+        </div>
+    </form>
+</section>
+{% endblock %}

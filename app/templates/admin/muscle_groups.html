@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}Muscle Groups - Admin{% endblock %}
+
+{% block content %}
+<section class="admin-section">
+    <div class="section-header">
+        <h2>Muscle Groups</h2>
+        <a href="/admin" class="btn-back">← Back</a>
+    </div>
+
+    <form class="inline-form" hx-post="/admin/muscle-groups" hx-target="#muscle-group-list" hx-swap="beforeend" hx-on::after-request="this.reset()">
+        <div class="form-row">
+            <input type="text" name="name" placeholder="Muscle group name" required>
+            <input type="number" name="recovery_time" placeholder="Recovery days" min="1" required>
+            <button type="submit" class="btn-submit">Add</button>
+        </div>
+    </form>
+
+    <div id="muscle-group-list" class="item-list">
+        {% for mg in muscle_groups %}
+        <div class="list-item" id="muscle-group-{{ mg.id }}">
+            <span class="item-name">{{ mg.name }}</span>
+            <form class="inline-edit" hx-put="/admin/muscle-groups/{{ mg.id }}" hx-swap="none">
+                <label>
+                    <span class="label-text">Recovery:</span>
+                    <input type="number" name="recovery_time" value="{{ mg.recovery_time }}" min="1" class="small-input" hx-put="/admin/muscle-groups/{{ mg.id }}" hx-trigger="change" hx-swap="none">
+                    <span class="label-text">days</span>
+                </label>
+            </form>
+            <button class="btn-delete" hx-delete="/admin/muscle-groups/{{ mg.id }}" hx-target="#muscle-group-{{ mg.id }}" hx-swap="outerHTML" hx-confirm="Delete {{ mg.name }}?">×</button>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+<style>
+.admin-section {
+    max-width: 600px;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+}
+
+.btn-back {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.875rem;
+}
+
+.btn-back:hover {
+    color: var(--accent);
+}
+
+.inline-form {
+    margin-bottom: 1.5rem;
+}
+
+.form-row {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.form-row input {
+    flex: 1;
+    padding: 0.625rem;
+    border: 1px solid var(--bg-card);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.form-row input[type="number"] {
+    max-width: 120px;
+}
+
+.item-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.list-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-card);
+    border-radius: 8px;
+}
+
+.item-name {
+    flex: 1;
+    font-weight: 500;
+}
+
+.inline-edit {
+    display: flex;
+    align-items: center;
+}
+
+.inline-edit label {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.label-text {
+    color: var(--text-secondary);
+}
+
+.small-input {
+    width: 60px;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--bg-secondary);
+    border-radius: 4px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    text-align: center;
+}
+
+.list-item .btn-delete {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+    line-height: 1;
+}
+</style>
+{% endblock %}

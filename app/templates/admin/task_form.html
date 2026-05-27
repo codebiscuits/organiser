@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Edit' if task else 'New' }} Task - Admin - Life Organiser{% endblock %}
+
+{% block content %}
+<section class="admin-task-form" x-data="taskForm()">
+    <h2>{{ 'Edit' if task else 'New' }} Task</h2>
+
+    <form method="POST" action="{{ '/admin/tasks/' ~ task.id if task else '/admin/tasks' }}" class="task-form">
+        {% set useFormNames = true %}
+        {% include "components/_task_form_fields.html" %}
+
+        <div class="form-actions">
+            <a href="/admin/tasks" class="btn-cancel">Cancel</a>
+            <button type="submit" class="btn-submit">{{ 'Update' if task else 'Create' }} Task</button>
+        </div>
+    </form>
+</section>
+
+<style>
+.admin-task-form h2 {
+    margin-bottom: 1.5rem;
+}
+
+.task-form {
+    background: var(--bg-card);
+    padding: 1.5rem;
+    border-radius: 12px;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+}
+
+.type-specific-fields h4 {
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+[x-cloak] {
+    display: none !important;
+}
+</style>
+
+<script>
+function taskForm() {
+    return {
+        selectedDays: [{% if recurrence and recurrence.day_of_week %}{{ recurrence.day_of_week.split(',')|map('tojson')|join(',') }}{% endif %}],
+        form: {
+            type: '{{ task.type if task else '' }}',
+            title: '{{ task.title|e if task else '' }}',
+            notes: '{{ task.notes|e if task and task.notes else '' }}',
+            estimated_duration: {{ task.estimated_duration if task and task.estimated_duration else 'null' }},
+            importance: {{ task.importance if task and task.importance else 2 }},
+            urgency: {{ task.urgency if task and task.urgency else 2 }},
+            allow_afternoon: {{ 'true' if task and task.allow_afternoon else 'false' }},
+            deadline_at: '{{ task.deadline_at.strftime("%Y-%m-%dT%H:%M") if task and task.deadline_at else '' }}',
+            scheduled_at: '{{ task.scheduled_at.strftime("%Y-%m-%dT%H:%M") if task and task.scheduled_at else '' }}',
+            prep_duration: {{ task.prep_duration if task and task.prep_duration else 'null' }},
+            scheduled_time: '{{ task.scheduled_time.strftime("%H:%M") if task and task.scheduled_time else '' }}',
+            location: '{{ task.location|e if task and task.location else '' }}',
+            recurrence: {
+                interval_type: '{{ recurrence.interval_type if recurrence else "daily" }}',
+                interval_multiple: {{ recurrence.interval_multiple if recurrence else 1 }},
+                day_of_week: '{{ recurrence.day_of_week if recurrence and recurrence.day_of_week else '' }}',
+                day_of_month: '{{ recurrence.day_of_month if recurrence and recurrence.day_of_month else '' }}',
+                month_of_year: '{{ recurrence.month_of_year if recurrence and recurrence.month_of_year else '' }}',
+                start_date: '{{ recurrence.start_date.strftime("%Y-%m-%d") if recurrence and recurrence.start_date else '' }}',
+                end_date: '{{ recurrence.end_date.strftime("%Y-%m-%d") if recurrence and recurrence.end_date else '' }}'
+            }
+        },
+        showUrgency() {
+            return ['errand', 'recurring', 'variable_recurring', 'workout'].includes(this.form.type);
+        },
+        showAllowAfternoon() {
+            return ['errand', 'recurring', 'variable_recurring'].includes(this.form.type);
+        }
+    }
+}
+</script>
+{% endblock %}

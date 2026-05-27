@@ -1,0 +1,120 @@
+<div class="modal-overlay" x-data="{
+    submitting: false,
+    selectedDays: {{ recurrence.day_of_week.split(',') if recurrence and recurrence.day_of_week else [] | tojson }},
+    form: {
+        type: '{{ task.type }}',
+        title: '{{ task.title | e }}',
+        notes: '{{ task.notes | e if task.notes else '' }}',
+        estimated_duration: {{ task.estimated_duration or 'null' }},
+        importance: {{ task.importance or 2 }},
+        urgency: {{ task.urgency or 2 }},
+        allow_afternoon: {{ 'true' if task.allow_afternoon else 'false' }},
+        deadline_at: {{ ('\"' ~ task.deadline_at.strftime('%Y-%m-%dT%H:%M') ~ '\"') if task.deadline_at else 'null' }},
+        scheduled_at: {{ ('\"' ~ task.scheduled_at.strftime('%Y-%m-%dT%H:%M') ~ '\"') if task.scheduled_at else 'null' }},
+        prep_duration: {{ task.prep_duration or 'null' }},
+        scheduled_time: {{ ('\"' ~ task.scheduled_time ~ '\"') if task.scheduled_time else 'null' }},
+        location: '{{ task.location | e if task.location else '' }}',
+        recurrence: {
+            interval_type: '{{ recurrence.interval_type if recurrence else 'daily' }}',
+            interval_multiple: {{ recurrence.interval_multiple if recurrence else 1 }},
+            day_of_week: {{ ('\"' ~ recurrence.day_of_week ~ '\"') if recurrence and recurrence.day_of_week else 'null' }},
+            day_of_month: {{ recurrence.day_of_month or 'null' }},
+            month_of_year: {{ recurrence.month_of_year or 'null' }},
+            start_date: {{ ('\"' ~ recurrence.start_date.strftime('%Y-%m-%d') ~ '\"') if recurrence and recurrence.start_date else 'null' }},
+            end_date: {{ ('\"' ~ recurrence.end_date.strftime('%Y-%m-%d') ~ '\"') if recurrence and recurrence.end_date else 'null' }}
+        }
+    },
+    showUrgency() {
+        return ['errand', 'recurring', 'variable_recurring', 'workout'].includes(this.form.type);
+    },
+    showAllowAfternoon() {
+        return ['errand', 'recurring', 'variable_recurring', 'workout'].includes(this.form.type);
+    },
+    closeModal() {
+        this.$root.remove();
+    },
+    async submitForm() {
+        this.submitting = true;
+        const payload = {
+            type: this.form.type,
+            title: this.form.title,
+            notes: this.form.notes || null,
+            estimated_duration: this.form.estimated_duration,
+            importance: this.form.importance,
+            allow_afternoon: this.form.allow_afternoon
+        };
+        if (this.showUrgency()) {
+            payload.urgency = this.form.urgency;
+        }
+        if (this.form.type === 'appointment') {
+            payload.scheduled_at = this.form.scheduled_at;
+            payload.prep_duration = this.form.prep_duration;
+            payload.location = this.form.location || null;
+        }
+        if (this.form.type === 'deadline') {
+            payload.deadline_at = this.form.deadline_at;
+        }
+        if (this.form.type === 'recurring' || this.form.type === 'variable_recurring' || this.form.type === 'workout') {
+            payload.recurrence = {
+                interval_type: this.form.recurrence.interval_type,
+                interval_multiple: this.form.recurrence.interval_multiple || 1
+            };
+            if (this.form.recurrence.interval_type === 'weekly' && this.selectedDays.length > 0) {
+                payload.recurrence.day_of_week = this.selectedDays.sort().join(',');
+            }
+            if (this.form.recurrence.interval_type === 'monthly' && this.form.recurrence.day_of_month) {
+                payload.recurrence.day_of_month = this.form.recurrence.day_of_month;
+            }
+            if (this.form.recurrence.interval_type === 'yearly' && this.form.recurrence.month_of_year) {
+                payload.recurrence.month_of_year = this.form.recurrence.month_of_year;
+            }
+            if (this.form.recurrence.start_date) {
+                payload.recurrence.start_date = this.form.recurrence.start_date + 'T00:00:00';
+            }
+            if (this.form.recurrence.end_date) {
+                payload.recurrence.end_date = this.form.recurrence.end_date + 'T00:00:00';
+            }
+            if (this.form.scheduled_time) {
+                payload.scheduled_time = this.form.scheduled_time;
+            }
+        }
+        try {
+            const response = await fetch('/tasks/{{ task.id }}', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (response.ok) {
+                this.closeModal();
+                htmx.trigger(document.body, 'taskUpdated');
+            } else {
+                const error = await response.json();
+                alert('Error updating task: ' + (error.detail || 'Unknown error'));
+            }
+        } catch (err) {
+            alert('Error updating task: ' + err.message);
+        } finally {
+            this.submitting = false;
+        }
+    }
+}" @click.self="closeModal()">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Edit Task</h2>
+            <button class="modal-close" @click="closeModal()">&times;</button>
+        </div>
+        
+        <form @submit.prevent="submitForm()" class="task-form">
+            {% set useFormNames = false %}
+            {% include "components/_task_form_fields.html" %}
+
+            <div class="form-actions">
+                <button type="button" class="btn-cancel" @click="closeModal()">Cancel</button>
+                <button type="submit" class="btn-submit" :disabled="submitting">
+                    <span x-show="!submitting">Update Task</span>
+                    <span x-show="submitting">Updating...</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>

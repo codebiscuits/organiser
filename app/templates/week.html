@@ -1,0 +1,359 @@
+{% extends "base.html" %}
+
+{% block title %}Week View - Life Organiser{% endblock %}
+
+{% block content %}
+<style>
+    main { max-width: 90vw !important; }
+</style>
+<div class="week-page" x-data="weekView()">
+    <div class="week-header">
+        <button class="week-nav-btn" @click="prevWeek()">&larr;</button>
+        <h2 x-text="weekTitle"></h2>
+        <button class="week-nav-btn" @click="nextWeek()">&rarr;</button>
+    </div>
+
+    <div class="week-container">
+        <!-- Time column -->
+        <div class="week-time-column">
+            <div class="week-day-header"></div>
+            {% for hour in range(6, 23) %}
+            <div class="week-time-slot">
+                <span class="week-time-label">{{ '%02d:00' % hour }}</span>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Day columns -->
+        {% for i in range(7) %}
+        <div class="week-day-column" data-day-offset="{{ i }}">
+            <div class="week-day-header">
+                <span class="week-day-name" x-text="getDayName({{ i }})"></span>
+                <span class="week-day-date" x-text="getDayDate({{ i }})"></span>
+            </div>
+            <div class="week-day-slots" 
+                 @click="handleSlotClick($event, {{ i }})"
+                 @dragover.prevent
+                 @drop="handleDrop($event, {{ i }})">
+                {% for hour in range(6, 23) %}
+                <div class="week-hour-slot" data-hour="{{ hour }}"></div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Task cards overlay - rendered via JS -->
+    <div class="week-tasks-overlay" id="week-tasks-overlay"></div>
+
+    <!-- Add Task Modal -->
+    <div class="modal-overlay" x-show="showAddModal" @click.self="showAddModal = false" x-cloak>
+        <div class="modal-content">
+            <h3>Add Task</h3>
+            <form @submit.prevent="saveNewTask()">
+                <div class="form-group">
+                    <label>Title</label>
+                    <input type="text" x-model="newTask.title" required autofocus>
+                </div>
+                <div class="form-group">
+                    <label>Type</label>
+                    <select x-model="newTask.type">
+                        <option value="appointment">Appointment</option>
+                        <option value="recurring">Recurring</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Date & Time</label>
+                    <input type="datetime-local" x-model="newTask.scheduled_at" required>
+                </div>
+                <div class="form-group">
+                    <label>Duration (minutes)</label>
+                    <input type="number" x-model="newTask.estimated_duration" min="15" step="15" value="30">
+                </div>
+                <div class="form-group">
+                    <label>Location (optional)</label>
+                    <input type="text" x-model="newTask.location">
+                </div>
+                <div class="form-group">
+                    <label>Notes (optional)</label>
+                    <textarea x-model="newTask.notes" rows="2"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-cancel" @click="showAddModal = false">Cancel</button>
+                    <button type="submit" class="btn-save">Add Task</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Task Details Modal -->
+    <div class="modal-overlay" x-show="showTaskModal" @click.self="showTaskModal = false" x-cloak>
+        <div class="modal-content">
+            <h3 x-text="selectedTask?.title"></h3>
+            <div class="task-details">
+                <p><strong>Type:</strong> <span x-text="selectedTask?.type"></span></p>
+                <p><strong>Time:</strong> <span x-text="formatTaskTime(selectedTask)"></span></p>
+                <p x-show="selectedTask?.duration"><strong>Duration:</strong> <span x-text="selectedTask?.duration + ' min'"></span></p>
+                <p x-show="selectedTask?.location"><strong>Location:</strong> <span x-text="selectedTask?.location"></span></p>
+                <p x-show="selectedTask?.notes"><strong>Notes:</strong> <span x-text="selectedTask?.notes"></span></p>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn-delete" @click="deleteTask()">Delete</button>
+                <button type="button" class="btn-cancel" @click="showTaskModal = false">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('alpine:init', () => {
+    Alpine.data('weekView', () => ({
+        weekOffset: 0,
+        tasks: [],
+        showAddModal: false,
+        showTaskModal: false,
+        selectedTask: null,
+        newTask: {
+            title: '',
+            type: 'appointment',
+            scheduled_at: '',
+            estimated_duration: 30,
+            location: '',
+            notes: ''
+        },
+
+        init() {
+            this.loadTasks();
+        },
+
+        get weekStart() {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            today.setDate(today.getDate() + (this.weekOffset * 7));
+            return today;
+        },
+
+        get weekTitle() {
+            const start = this.weekStart;
+            const end = new Date(start);
+            end.setDate(end.getDate() + 6);
+            const opts = { month: 'short', day: 'numeric' };
+            return `${start.toLocaleDateString('en-US', opts)} - ${end.toLocaleDateString('en-US', opts)}, ${end.getFullYear()}`;
+        },
+
+        getDayName(offset) {
+            const date = new Date(this.weekStart);
+            date.setDate(date.getDate() + offset);
+            return date.toLocaleDateString('en-US', { weekday: 'short' });
+        },
+
+        getDayDate(offset) {
+            const date = new Date(this.weekStart);
+            date.setDate(date.getDate() + offset);
+            return date.getDate();
+        },
+
+        getDateForOffset(offset) {
+            const date = new Date(this.weekStart);
+            date.setDate(date.getDate() + offset);
+            return date;
+        },
+
+        prevWeek() {
+            this.weekOffset--;
+            this.loadTasks();
+        },
+
+        nextWeek() {
+            this.weekOffset++;
+            this.loadTasks();
+        },
+
+        async loadTasks() {
+            const start = this.weekStart.toISOString().split('T')[0];
+            const end = new Date(this.weekStart);
+            end.setDate(end.getDate() + 6);
+            const endStr = end.toISOString().split('T')[0];
+
+            try {
+                const response = await fetch(`/tasks/week?start=${start}&end=${endStr}`);
+                if (response.ok) {
+                    this.tasks = await response.json();
+                    this.renderTasks();
+                }
+            } catch (error) {
+                console.error('Failed to load tasks:', error);
+            }
+        },
+
+        renderTasks() {
+            const overlay = document.getElementById('week-tasks-overlay');
+            overlay.innerHTML = '';
+
+            const columns = document.querySelectorAll('.week-day-column');
+            const weekStartDate = this.weekStart.toISOString().split('T')[0];
+            
+            for (const task of this.tasks) {
+                const taskDate = new Date(task.scheduled_at);
+                const taskDateStr = task.scheduled_at.split('T')[0];
+                
+                // Calculate day offset by comparing date strings to avoid timezone issues
+                const weekStartMs = new Date(weekStartDate + 'T00:00:00').getTime();
+                const taskDateMs = new Date(taskDateStr + 'T00:00:00').getTime();
+                const dayOffset = Math.round((taskDateMs - weekStartMs) / (1000 * 60 * 60 * 24));
+                
+                if (dayOffset < 0 || dayOffset > 6) continue;
+
+                const column = columns[dayOffset];
+                if (!column) continue;
+
+                const slotsContainer = column.querySelector('.week-day-slots');
+                const columnRect = slotsContainer.getBoundingClientRect();
+                
+                const hour = taskDate.getHours();
+                const minute = taskDate.getMinutes();
+                const startHour = 6;
+                const slotHeight = 60;
+                
+                const top = (hour - startHour) * slotHeight + (minute / 60) * slotHeight;
+                const duration = task.duration || 30;
+                const height = Math.max((duration / 60) * slotHeight, 25);
+
+                const card = document.createElement('div');
+                card.className = 'week-task-card';
+                card.dataset.taskId = task.id;
+                card.style.top = top + 'px';
+                card.style.height = height + 'px';
+                card.innerHTML = `
+                    <span class="week-task-title">${task.title}</span>
+                    <span class="week-task-time">${taskDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
+                `;
+                
+                card.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.selectedTask = task;
+                    this.showTaskModal = true;
+                });
+
+                slotsContainer.appendChild(card);
+            }
+        },
+
+        handleSlotClick(event, dayOffset) {
+            if (event.target.closest('.week-task-card')) return;
+            
+            const slotsContainer = event.currentTarget;
+            const rect = slotsContainer.getBoundingClientRect();
+            const y = event.clientY - rect.top;
+            
+            const startHour = 6;
+            const slotHeight = 60;
+            const hour = Math.floor(y / slotHeight) + startHour;
+            const minute = Math.round((y % slotHeight) / slotHeight * 60 / 15) * 15;
+            
+            const date = this.getDateForOffset(dayOffset);
+            date.setHours(hour, minute, 0, 0);
+            
+            const localISOTime = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+            
+            this.newTask = {
+                title: '',
+                type: 'appointment',
+                scheduled_at: localISOTime,
+                estimated_duration: 30,
+                location: '',
+                notes: ''
+            };
+            this.showAddModal = true;
+        },
+
+        async saveNewTask() {
+            const scheduledAt = new Date(this.newTask.scheduled_at);
+            
+            const payload = {
+                title: this.newTask.title,
+                type: this.newTask.type,
+                scheduled_at: scheduledAt.toISOString(),
+                estimated_duration: parseInt(this.newTask.estimated_duration),
+                location: this.newTask.location || null,
+                notes: this.newTask.notes || null,
+                importance: 2,
+                urgency: 2
+            };
+
+            try {
+                const response = await fetch('/tasks/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    this.showAddModal = false;
+                    this.loadTasks();
+                } else {
+                    const error = await response.json();
+                    alert('Failed to create task: ' + (error.detail || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error creating task:', error);
+                alert('Failed to create task');
+            }
+        },
+
+        async deleteTask() {
+            if (!this.selectedTask) return;
+            
+            const isRecurring = this.selectedTask.projection_date != null;
+            const confirmMsg = isRecurring 
+                ? `Remove this occurrence of "${this.selectedTask.title}" on ${this.selectedTask.projection_date}?`
+                : `Delete "${this.selectedTask.title}"?`;
+            
+            if (!confirm(confirmMsg)) return;
+
+            try {
+                let response;
+                if (isRecurring) {
+                    response = await fetch(
+                        `/tasks/week/projection/${this.selectedTask.id}?date=${this.selectedTask.projection_date}`,
+                        { method: 'DELETE' }
+                    );
+                } else {
+                    response = await fetch(`/tasks/${this.selectedTask.id}`, {
+                        method: 'DELETE'
+                    });
+                }
+
+                if (response.ok) {
+                    this.showTaskModal = false;
+                    this.selectedTask = null;
+                    this.loadTasks();
+                } else {
+                    alert('Failed to delete task');
+                }
+            } catch (error) {
+                console.error('Error deleting task:', error);
+                alert('Failed to delete task');
+            }
+        },
+
+        formatTaskTime(task) {
+            if (!task?.scheduled_at) return '';
+            const date = new Date(task.scheduled_at);
+            return date.toLocaleString('en-US', {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            });
+        },
+
+        handleDrop(event, dayOffset) {
+            // Future: implement drag-and-drop between days
+        }
+    }));
+});
+</script>
+{% endblock %}

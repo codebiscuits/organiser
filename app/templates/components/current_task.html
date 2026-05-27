@@ -1,0 +1,72 @@
+{% if task %}
+<article class="task-card-focus" data-task-id="{{ task.task.id }}" data-priority="{{ task.priority_score }}">
+    <h1 class="focus-title">
+        {% if task.task.type == 'workout' and task.selected_exercise %}
+            Workout: {{ task.selected_exercise }}
+        {% else %}
+            {{ task.task.title }}
+        {% endif %}
+    </h1>
+    
+    <div class="focus-meta">
+        <span class="task-type-badge">{{ task.task.type }}</span>
+        <span class="task-duration-badge">{{ task.task.estimated_duration }} min</span>
+        {% if task.scheduled_time %}
+        <span class="task-time-badge">{{ task.scheduled_time.strftime('%H:%M') }}{% if task.is_fixed %} (fixed){% endif %}</span>
+        {% endif %}
+    </div>
+    
+    {% if task.task.type == 'deadline' and task.task.deadline_at %}
+    <div class="focus-countdown" x-data="countdown('{{ task.task.deadline_at.isoformat() }}')" x-text="timeRemaining"></div>
+    {% endif %}
+    
+    {% if task.task.notes %}
+    <p class="focus-notes">{{ task.task.notes }}</p>
+    {% endif %}
+    
+    <div class="focus-actions">
+        {% if task.task.type == 'workout' %}
+        <button
+            hx-get="/tasks/{{ task.task.id }}/complete/workout"
+            hx-trigger="click"
+            hx-target="body"
+            hx-swap="beforeend"
+            class="btn-complete-focus"
+        >
+            ✓ Done
+        </button>
+        {% elif task.task.type == 'variable_recurring' %}
+        <button
+            hx-get="/tasks/{{ task.task.id }}/complete/variable"
+            hx-trigger="click"
+            hx-target="body"
+            hx-swap="beforeend"
+            class="btn-complete-focus"
+        >
+            ✓ Done
+        </button>
+        {% else %}
+        <button
+            hx-post="/tasks/{{ task.task.id }}/complete"
+            hx-trigger="click"
+            hx-swap="none"
+            class="btn-complete-focus"
+        >
+            ✓ Done
+        </button>
+        {% endif %}
+        <button 
+            hx-post="/tasks/{{ task.task.id }}/defer"
+            hx-trigger="click"
+            hx-swap="none"
+            class="btn-defer-focus"
+        >
+            Later
+        </button>
+    </div>
+</article>
+{% else %}
+<div class="no-current-task">
+    <p>All done for today!</p>
+</div>
+{% endif %}

@@ -1,0 +1,25 @@
+<tr id="workout-entry-{{ entry.id }}">
+    <td>{{ entry.created_at.strftime('%H:%M') if entry.created_at else '' }}</td>
+    <td>
+        <select name="exercise_id" form="edit-form-{{ entry.id }}" required>
+            {% for ex in exercises %}
+            <option value="{{ ex.id }}" {% if ex.id == entry.exercise_id %}selected{% endif %}>{{ ex.name }}</option>
+            {% endfor %}
+        </select>
+    </td>
+    <td><input type="number" name="num_sets" form="edit-form-{{ entry.id }}" min="1" value="{{ entry.num_sets }}" required style="width: 4rem;"></td>
+    <td><input type="number" name="reps" form="edit-form-{{ entry.id }}" min="1" value="{{ entry.reps }}" required style="width: 4rem;"></td>
+    <td><input type="number" name="weight_kg" form="edit-form-{{ entry.id }}" step="0.5" min="0" value="{{ entry.weight_kg }}" required style="width: 5rem;"></td>
+    <td>
+        <select name="intensity" form="edit-form-{{ entry.id }}" required>
+            <option value="heavy" {% if entry.intensity == 'heavy' %}selected{% endif %}>Heavy</option>
+            <option value="light" {% if entry.intensity == 'light' %}selected{% endif %}>Light</option>
+        </select>
+    </td>
+    <td class="entry-actions">
+        <form id="edit-form-{{ entry.id }}" hx-post="/admin/workout-history/{{ entry.id }}" hx-target="#workout-entry-{{ entry.id }}" hx-swap="outerHTML" style="display: inline;">
+            <button type="submit" class="btn-action">Save</button>
+        </form>
+        <button type="button" class="btn-action btn-action-danger" onclick="window.location.reload()">Cancel</button>
+    </td>
+</tr>

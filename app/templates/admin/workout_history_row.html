@@ -1,0 +1,12 @@
+<tr id="workout-entry-{{ item.id }}">
+    <td>{{ item.created_at.strftime('%H:%M') if item.created_at else '' }}</td>
+    <td>{{ exercise_name }}</td>
+    <td>{{ item.num_sets }}</td>
+    <td>{{ item.reps }}</td>
+    <td>{{ item.weight_kg | int }}</td>
+    <td>{{ item.intensity or '' }}</td>
+    <td class="entry-actions">
+        <button class="btn-action" hx-get="/admin/workout-history/{{ item.id }}/edit" hx-target="#workout-entry-{{ item.id }}" hx-swap="outerHTML">Edit</button>
+        <button class="btn-action btn-action-danger" hx-delete="/admin/workout-history/{{ item.id }}" hx-target="#workout-entry-{{ item.id }}" hx-swap="outerHTML" hx-confirm="Delete this entry?">Delete</button>
+    </td>
+</tr>
