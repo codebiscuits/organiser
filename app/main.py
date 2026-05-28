@@ -25,3 +25,8 @@ async def index(request: Request):
 app.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 app.include_router(workouts.router, prefix="/workouts", tags=["workouts"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8888, reload=True)

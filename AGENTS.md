@@ -6,7 +6,7 @@ Personal task management PWA. Read this before making changes.
 
 ```bash
 uv sync                                        # create .venv and install deps
-uv run uvicorn app.main:app --reload           # http://localhost:8000
+uv run uvicorn app.main:app --reload --port 8888  # http://localhost:8888
 uv run pytest                                  # run tests
 ```
 

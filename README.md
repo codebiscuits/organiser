@@ -6,8 +6,8 @@ A personal task management PWA that automatically builds a prioritised daily sch
 
 ```bash
 uv sync
-uv run uvicorn app.main:app --reload
-# Open http://localhost:8000
+uv run uvicorn app.main:app --reload --port 8888
+# Open http://localhost:8888
 ```
 
 `uv sync` creates `.venv` and installs all dependencies on the first run. The SQLite database (`organiser.db`) is created automatically when the server starts.
@@ -17,7 +17,7 @@ If you prefer to activate the virtual environment manually:
 ```bash
 uv sync
 source .venv/bin/activate
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8888
 ```
 
 ---
@@ -361,7 +361,7 @@ The following are stubbed or partially implemented:
 uv run pytest
 ```
 
-Current tests: `tests/test_prioritisation.py` (prioritisation service unit tests).
+Tests cover the prioritisation service, recurrence logic, workout algorithm, and API routes (119 tests).
 
 ---
 
