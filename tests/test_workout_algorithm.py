@@ -197,8 +197,10 @@ class TestSelectTodaysExercises:
         bench = add_exercise(db, "Bench", "heavy", [chest])
         squat = add_exercise(db, "Squat", "heavy", [legs])
 
-        # Work chest recently → chest score = 0, legs score = 4 (never worked)
+        # Heavy chest set 1 day ago; light set today so get_todays_intensity returns "heavy".
+        # Under heavy scoring: chest = max(0, 1-2) = 0, legs (never worked) = 4 → squat wins.
         add_performed_set(db, bench, "heavy", days_ago=1)
+        add_performed_set(db, bench, "light", days_ago=0)
 
         result = select_todays_exercises(db, count=1)
         assert len(result) == 1

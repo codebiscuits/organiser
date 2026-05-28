@@ -33,7 +33,7 @@ def get_or_create_user(db: Session) -> User:
 
 @router.get("/")
 async def admin_dashboard(request: Request, db: Session = Depends(get_db)):
-    return templates.TemplateResponse("admin/dashboard.html", {"request": request})
+    return templates.TemplateResponse(request, "admin/dashboard.html")
 
 
 @router.post("/refresh-projections")
@@ -69,16 +69,18 @@ async def admin_tasks(
         query = query.filter(Task.type == type)
     tasks = query.order_by(Task.created_at.desc()).all()
     return templates.TemplateResponse(
+        request,
         "admin/tasks.html",
-        {"request": request, "tasks": tasks, "filter_type": type},
+        {"tasks": tasks, "filter_type": type},
     )
 
 
 @router.get("/tasks/new")
 async def admin_task_new(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
+        request,
         "admin/task_form.html",
-        {"request": request, "task": None, "recurrence": None},
+        {"task": None, "recurrence": None},
     )
 
 
@@ -165,8 +167,9 @@ async def admin_task_edit(
 
     recurrence = db.query(Recurrence).filter(Recurrence.task_id == task_id).first()
     return templates.TemplateResponse(
+        request,
         "admin/task_form.html",
-        {"request": request, "task": task, "recurrence": recurrence},
+        {"task": task, "recurrence": recurrence},
     )
 
 
@@ -269,8 +272,9 @@ async def admin_task_delete(task_id: str, db: Session = Depends(get_db)):
 async def admin_muscle_groups(request: Request, db: Session = Depends(get_db)):
     muscle_groups = db.query(MuscleGroup).order_by(MuscleGroup.name).all()
     return templates.TemplateResponse(
+        request,
         "admin/muscle_groups.html",
-        {"request": request, "muscle_groups": muscle_groups},
+        {"muscle_groups": muscle_groups},
     )
 
 
@@ -333,8 +337,9 @@ async def admin_exercises(request: Request, db: Session = Depends(get_db)):
         muscle_ids = [em.muscle_id for em in db.query(ExerciseMuscle).filter(ExerciseMuscle.exercise_id == ex.id).all()]
         ex.muscles = db.query(MuscleGroup).filter(MuscleGroup.id.in_(muscle_ids)).all() if muscle_ids else []
     return templates.TemplateResponse(
+        request,
         "admin/exercises.html",
-        {"request": request, "exercises": exercises},
+        {"exercises": exercises},
     )
 
 
@@ -342,8 +347,9 @@ async def admin_exercises(request: Request, db: Session = Depends(get_db)):
 async def admin_exercise_new(request: Request, db: Session = Depends(get_db)):
     muscle_groups = db.query(MuscleGroup).order_by(MuscleGroup.name).all()
     return templates.TemplateResponse(
+        request,
         "admin/exercise_form.html",
-        {"request": request, "exercise": None, "muscle_groups": muscle_groups, "selected_muscle_ids": []},
+        {"exercise": None, "muscle_groups": muscle_groups, "selected_muscle_ids": []},
     )
 
 
@@ -386,9 +392,9 @@ async def admin_exercise_edit(
         for em in db.query(ExerciseMuscle).filter(ExerciseMuscle.exercise_id == exercise_id).all()
     ]
     return templates.TemplateResponse(
+        request,
         "admin/exercise_form.html",
         {
-            "request": request,
             "exercise": exercise,
             "muscle_groups": muscle_groups,
             "selected_muscle_ids": selected_muscle_ids,
@@ -440,8 +446,9 @@ async def admin_exercise_delete(exercise_id: int, db: Session = Depends(get_db))
 async def user_preferences(request: Request, db: Session = Depends(get_db)):
     user = get_or_create_user(db)
     return templates.TemplateResponse(
+        request,
         "admin/user_preferences.html",
-        {"request": request, "user": user},
+        {"user": user},
     )
 
 
@@ -503,9 +510,9 @@ async def admin_completed_tasks(
     )
 
     return templates.TemplateResponse(
+        request,
         "admin/completed_tasks.html",
         {
-            "request": request,
             "completed_tasks": completed_tasks,
             "page": page,
             "total_pages": total_pages,
@@ -543,8 +550,9 @@ async def admin_workout_history(request: Request, db: Session = Depends(get_db))
     today = date.today().isoformat()
 
     return templates.TemplateResponse(
+        request,
         "admin/workout_history.html",
-        {"request": request, "grouped_sets": grouped_sets, "exercises": exercises, "today": today},
+        {"grouped_sets": grouped_sets, "exercises": exercises, "today": today},
     )
 
 
@@ -599,8 +607,9 @@ async def admin_edit_workout_history_form(
         return Response(status_code=404)
     exercises = db.query(Exercise).order_by(Exercise.name).all()
     return templates.TemplateResponse(
+        request,
         "admin/workout_history_edit_row.html",
-        {"request": request, "entry": performed_set, "exercises": exercises},
+        {"entry": performed_set, "exercises": exercises},
     )
 
 
@@ -627,6 +636,7 @@ async def admin_update_workout_history(
 
     exercise_name = db.query(Exercise.name).filter(Exercise.id == exercise_id).scalar()
     return templates.TemplateResponse(
+        request,
         "admin/workout_history_row.html",
-        {"request": request, "item": performed_set, "exercise_name": exercise_name},
+        {"item": performed_set, "exercise_name": exercise_name},
     )

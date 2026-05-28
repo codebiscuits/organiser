@@ -40,8 +40,9 @@ async def list_tasks(request: Request, db: Session = Depends(get_db)):
     """Get prioritised task list for today."""
     prioritised_tasks, capacity = get_prioritised_tasks_with_metadata(db, date.today())
     return templates.TemplateResponse(
+        request,
         "components/task_list.html",
-        {"request": request, "tasks": prioritised_tasks, "capacity": capacity}
+        {"tasks": prioritised_tasks, "capacity": capacity},
     )
 
 
@@ -51,8 +52,9 @@ async def current_task(request: Request, db: Session = Depends(get_db)):
     prioritised_tasks, _ = get_prioritised_tasks_with_metadata(db, date.today())
     current = prioritised_tasks[0] if prioritised_tasks else None
     return templates.TemplateResponse(
+        request,
         "components/current_task.html",
-        {"request": request, "task": current}
+        {"task": current},
     )
 
 
@@ -61,18 +63,16 @@ async def upcoming_tasks(request: Request, db: Session = Depends(get_db)):
     """Get upcoming tasks (all except current)."""
     prioritised_tasks, capacity = get_prioritised_tasks_with_metadata(db, date.today())
     return templates.TemplateResponse(
+        request,
         "components/task_list.html",
-        {"request": request, "tasks": prioritised_tasks[1:], "capacity": capacity}
+        {"tasks": prioritised_tasks[1:], "capacity": capacity},
     )
 
 
 @router.get("/new", response_class=HTMLResponse)
 async def new_task_form(request: Request):
     """Return the task creation form modal."""
-    return templates.TemplateResponse(
-        "components/task_form.html",
-        {"request": request}
-    )
+    return templates.TemplateResponse(request, "components/task_form.html")
 
 
 @router.get("/all", response_model=list[TaskResponse])
@@ -92,8 +92,9 @@ async def timeline_view(request: Request, db: Session = Depends(get_db)):
     """
     prioritised_tasks, _ = get_prioritised_tasks_with_metadata(db, date.today())
     return templates.TemplateResponse(
+        request,
         "timeline.html",
-        {"request": request, "tasks": prioritised_tasks, "today": date.today()}
+        {"tasks": prioritised_tasks, "today": date.today()},
     )
 
 
@@ -159,7 +160,7 @@ async def week_view(
         from fastapi.responses import JSONResponse
         return JSONResponse(content=result)
     
-    return templates.TemplateResponse("week.html", {"request": request})
+    return templates.TemplateResponse(request, "week.html")
 
 
 @router.delete("/week/projection/{task_id}")
@@ -365,8 +366,9 @@ async def get_variable_complete_form(
         raise HTTPException(status_code=400, detail="Task is not variable recurring")
 
     return templates.TemplateResponse(
+        request,
         "components/variable_complete_form.html",
-        {"request": request, "task": task}
+        {"task": task},
     )
 
 
@@ -427,14 +429,14 @@ async def get_workout_completion_form(
     all_exercises = db.query(Exercise).order_by(Exercise.name).all()
     
     return templates.TemplateResponse(
+        request,
         "components/workout_complete_form.html",
         {
-            "request": request,
             "task": task,
             "scheduled_exercise": scheduled_exercise,
             "all_exercises": all_exercises,
             "intensity": intensity,
-        }
+        },
     )
 
 
@@ -528,8 +530,9 @@ async def delete_task(request: Request, task_id: str, db: Session = Depends(get_
     # Return refreshed task list
     prioritised_tasks, capacity = get_prioritised_tasks_with_metadata(db, date.today())
     return templates.TemplateResponse(
+        request,
         "components/task_list.html",
-        {"request": request, "tasks": prioritised_tasks, "capacity": capacity}
+        {"tasks": prioritised_tasks, "capacity": capacity},
     )
 
 
@@ -543,8 +546,9 @@ async def edit_task_form(request: Request, task_id: str, db: Session = Depends(g
     recurrence = db.query(Recurrence).filter(Recurrence.task_id == task_id).first()
     
     return templates.TemplateResponse(
+        request,
         "components/task_edit_form.html",
-        {"request": request, "task": task, "recurrence": recurrence}
+        {"task": task, "recurrence": recurrence},
     )
 
 
