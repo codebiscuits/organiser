@@ -55,10 +55,11 @@
             ✓ Done
         </button>
         {% endif %}
-        <button 
+        <button
             hx-post="/tasks/{{ task.task.id }}/defer"
             hx-trigger="click"
             hx-swap="none"
+            hx-on::after-request="htmx.trigger(document.body, 'taskUpdated')"
             class="btn-defer-focus"
         >
             Later

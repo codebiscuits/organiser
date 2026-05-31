@@ -49,11 +49,12 @@
                 title="Done"
             >✓</button>
             {% endif %}
-            <button 
+            <button
                 class="btn-mini btn-defer"
                 hx-post="/tasks/{{ pt.task.id }}/defer"
                 hx-trigger="click"
                 hx-swap="none"
+                hx-on::after-request="htmx.trigger(document.body, 'taskUpdated')"
                 title="Defer"
             >⏱</button>
             <button 

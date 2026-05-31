@@ -23,6 +23,7 @@ class Task(Base):
     location = Column(String)
     status = Column(String, default="pending")
     deferred_count = Column(Integer, default=0)
+    snooze_until = Column(String)  # date string YYYY-MM-DD; hide task until this date
     manual_scheduled_time = Column(DateTime)  # user-set time from timeline drag-and-drop
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

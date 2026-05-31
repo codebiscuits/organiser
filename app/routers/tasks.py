@@ -500,9 +500,12 @@ async def defer_task(request: Request, task_id: str, db: Session = Depends(get_d
         Projection.task_id == task_id,
         Projection.due_date == date.today()
     ).first()
-    
+
     if today_projection:
         today_projection.due_date = date.today() + timedelta(days=1)
+    else:
+        # Errands and deadlines have no projection — snooze them until tomorrow
+        task.snooze_until = str(date.today() + timedelta(days=1))
 
     db.commit()
     

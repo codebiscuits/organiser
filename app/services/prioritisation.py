@@ -1,6 +1,7 @@
 from datetime import datetime, date, time, timedelta
 from enum import IntEnum
 from dataclasses import dataclass, field
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.task import Task
@@ -190,6 +191,7 @@ def get_flexible_tasks(db: Session, target_date: date, available_hours_per_day: 
     errands = db.query(Task).filter(
         Task.type == "errand",
         Task.status == "pending",
+        or_(Task.snooze_until.is_(None), Task.snooze_until <= str(target_date)),
     ).all()
     
     for task in errands:
