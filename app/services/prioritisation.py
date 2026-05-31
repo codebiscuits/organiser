@@ -173,7 +173,7 @@ def get_flexible_tasks(db: Session, target_date: date, available_hours_per_day: 
         recurring_tasks = db.query(Task).filter(
             Task.id.in_(recurring_task_ids),
             Task.status == "pending",
-            Task.scheduled_at.is_(None),
+            Task.scheduled_time.is_(None),
         ).all()
         
         for task in recurring_tasks:
@@ -449,7 +449,7 @@ def get_prioritised_tasks_with_metadata(
     capacity = {
         "main_available": main_available,
         "afternoon_available": afternoon_available,
-        "total_candidate_time": sum(pt.task.estimated_duration or 0 for pt in flexible),
+        "total_candidate_time": sum(pt.task.estimated_duration or 0 for pt in scheduled if not pt.is_fixed),
         "fixed_count": len(fixed),
         "flexible_count": len(flexible),
         "scheduled_count": len(scheduled),
