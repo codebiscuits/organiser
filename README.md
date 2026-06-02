@@ -22,6 +22,102 @@ uvicorn app.main:app --reload --port 8888
 
 ---
 
+## Production Deployment (Raspberry Pi)
+
+The app runs as a systemd service on a Raspberry Pi, accessible remotely via Tailscale.
+
+### Setup
+
+```bash
+# On the Pi
+mkdir -p ~/Apps && cd ~/Apps
+git clone <repo-url> organiser
+cd organiser
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source ~/.local/bin/env
+uv sync --no-dev
+```
+
+Create `/etc/systemd/system/organiser.service`:
+
+```ini
+[Unit]
+Description=Life Organiser
+After=network.target
+
+[Service]
+Type=simple
+User=ross
+WorkingDirectory=/home/ross/Apps/organiser
+ExecStart=/home/ross/.local/bin/uv run uvicorn app.main:app --host 0.0.0.0 --port 8888
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now organiser
+```
+
+### Remote Access (Tailscale)
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+Install Tailscale on your phone and sign in with the same account. Access the app at `http://<pi-tailscale-ip>:8888`.
+
+### Auto-deploy
+
+A systemd timer runs `scripts/update.sh` every 60 seconds. It pulls from `origin/main` and restarts the service only when new commits are detected.
+
+Create `/etc/systemd/system/organiser-update.service`:
+
+```ini
+[Unit]
+Description=Check for and apply Life Organiser updates
+
+[Service]
+Type=oneshot
+User=ross
+ExecStart=/home/ross/Apps/organiser/scripts/update.sh
+StandardOutput=append:/var/log/organiser-update.log
+StandardError=append:/var/log/organiser-update.log
+```
+
+Create `/etc/systemd/system/organiser-update.timer`:
+
+```ini
+[Unit]
+Description=Poll for Life Organiser updates every minute
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=60
+
+[Install]
+WantedBy=timers.target
+```
+
+Allow the script to restart the service without a password (`sudo visudo -f /etc/sudoers.d/organiser`):
+
+```
+ross ALL=(ALL) NOPASSWD: /bin/systemctl restart organiser
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now organiser-update.timer
+```
+
+Deploy log: `cat /var/log/organiser-update.log`
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |
