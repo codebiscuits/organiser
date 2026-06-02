@@ -15,6 +15,6 @@ if [ "$LOCAL" = "$REMOTE" ]; then
 fi
 
 git pull origin main --quiet
-uv sync --no-dev --quiet
+/home/ross/.local/bin/uv sync --no-dev --quiet
 sudo systemctl restart organiser
 echo "$(date): deployed $(git rev-parse --short HEAD)"
