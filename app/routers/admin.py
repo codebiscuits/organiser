@@ -12,6 +12,7 @@ from app.models.recurrence import Projection, Recurrence
 from app.services.recurrence import generate_projections, refresh_projections
 from datetime import timedelta
 from app.models.task import CompletedTask, Task
+from app.models.preset import TaskPreset
 from app.models.user import User
 from app.models.workout import Exercise, ExerciseMuscle, MuscleGroup, PerformedSet
 
@@ -262,6 +263,147 @@ async def admin_task_delete(task_id: str, db: Session = Depends(get_db)):
         db.query(Recurrence).filter(Recurrence.task_id == task_id).delete()
         db.query(Projection).filter(Projection.task_id == task_id).delete()
         db.delete(task)
+        db.commit()
+    return Response(status_code=200)
+
+
+# ============== PRESETS ==============
+
+@router.get("/presets")
+async def admin_presets(request: Request, db: Session = Depends(get_db)):
+    presets = db.query(TaskPreset).order_by(TaskPreset.name).all()
+    return templates.TemplateResponse(
+        request,
+        "admin/presets.html",
+        {"presets": presets},
+    )
+
+
+@router.get("/presets/new")
+async def admin_preset_new(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "admin/preset_form.html",
+        {"preset": None},
+    )
+
+
+@router.post("/presets")
+async def admin_preset_create(
+    request: Request,
+    db: Session = Depends(get_db),
+    name: str = Form(...),
+    type: str = Form(...),
+    title: Optional[str] = Form(None),
+    notes: Optional[str] = Form(None),
+    estimated_duration: Optional[int] = Form(None),
+    importance: Optional[int] = Form(None),
+    urgency: Optional[int] = Form(None),
+    allow_afternoon: Optional[str] = Form(None),
+    prep_duration: Optional[int] = Form(None),
+    scheduled_time: Optional[str] = Form(None),
+    location: Optional[str] = Form(None),
+    interval_type: Optional[str] = Form(None),
+    interval_multiple: Optional[int] = Form(1),
+    day_of_week: Optional[List[str]] = Form(None),
+    day_of_month: Optional[str] = Form(None),
+    month_of_year: Optional[str] = Form(None),
+    allowed_days: Optional[List[str]] = Form(None),
+):
+    preset = TaskPreset(
+        name=name,
+        type=type,
+        title=title or None,
+        notes=notes or None,
+        estimated_duration=estimated_duration,
+        importance=importance,
+        urgency=urgency,
+        allow_afternoon=allow_afternoon == "true",
+        prep_duration=prep_duration,
+        scheduled_time=time.fromisoformat(scheduled_time) if scheduled_time else None,
+        location=location or None,
+        interval_type=interval_type or None,
+        interval_multiple=interval_multiple or 1,
+        day_of_week=",".join(day_of_week) if day_of_week else None,
+        day_of_month=day_of_month or None,
+        month_of_year=month_of_year or None,
+        allowed_days=",".join(allowed_days) if allowed_days else None,
+    )
+    db.add(preset)
+    db.commit()
+    return RedirectResponse(url="/admin/presets", status_code=303)
+
+
+@router.get("/presets/{preset_id}/edit")
+async def admin_preset_edit(
+    request: Request,
+    preset_id: int,
+    db: Session = Depends(get_db),
+):
+    preset = db.query(TaskPreset).filter(TaskPreset.id == preset_id).first()
+    if not preset:
+        return RedirectResponse(url="/admin/presets", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "admin/preset_form.html",
+        {"preset": preset},
+    )
+
+
+@router.post("/presets/{preset_id}")
+async def admin_preset_update(
+    request: Request,
+    preset_id: int,
+    db: Session = Depends(get_db),
+    name: str = Form(...),
+    type: str = Form(...),
+    title: Optional[str] = Form(None),
+    notes: Optional[str] = Form(None),
+    estimated_duration: Optional[int] = Form(None),
+    importance: Optional[int] = Form(None),
+    urgency: Optional[int] = Form(None),
+    allow_afternoon: Optional[str] = Form(None),
+    prep_duration: Optional[int] = Form(None),
+    scheduled_time: Optional[str] = Form(None),
+    location: Optional[str] = Form(None),
+    interval_type: Optional[str] = Form(None),
+    interval_multiple: Optional[int] = Form(1),
+    day_of_week: Optional[List[str]] = Form(None),
+    day_of_month: Optional[str] = Form(None),
+    month_of_year: Optional[str] = Form(None),
+    allowed_days: Optional[List[str]] = Form(None),
+):
+    preset = db.query(TaskPreset).filter(TaskPreset.id == preset_id).first()
+    if not preset:
+        return RedirectResponse(url="/admin/presets", status_code=303)
+
+    preset.name = name
+    preset.type = type
+    preset.title = title or None
+    preset.notes = notes or None
+    preset.estimated_duration = estimated_duration
+    preset.importance = importance
+    preset.urgency = urgency
+    preset.allow_afternoon = allow_afternoon == "true"
+    preset.prep_duration = prep_duration
+    preset.scheduled_time = time.fromisoformat(scheduled_time) if scheduled_time else None
+    preset.location = location or None
+    preset.interval_type = interval_type or None
+    preset.interval_multiple = interval_multiple or 1
+    preset.day_of_week = ",".join(day_of_week) if day_of_week else None
+    preset.day_of_month = day_of_month or None
+    preset.month_of_year = month_of_year or None
+    preset.allowed_days = ",".join(allowed_days) if allowed_days else None
+
+    db.commit()
+    return RedirectResponse(url="/admin/presets", status_code=303)
+
+
+@router.delete("/presets/{preset_id}")
+async def admin_preset_delete(preset_id: int, db: Session = Depends(get_db)):
+    preset = db.query(TaskPreset).filter(TaskPreset.id == preset_id).first()
+    if preset:
+        db.delete(preset)
         db.commit()
     return Response(status_code=200)
 

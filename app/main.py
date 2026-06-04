@@ -2,14 +2,15 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.database import engine
+from app.database import engine, run_migrations
 from app.models import Base
-from app.routers import tasks, workouts, admin
+from app.routers import tasks, workouts, admin, presets
 
 app = FastAPI(title="Life Organiser")
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
+run_migrations(engine)
 
 # Static files and templates
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -25,6 +26,7 @@ async def index(request: Request):
 app.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 app.include_router(workouts.router, prefix="/workouts", tags=["workouts"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(presets.router, prefix="/presets", tags=["presets"])
 
 
 if __name__ == "__main__":

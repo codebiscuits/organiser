@@ -1238,3 +1238,48 @@ main {
     color: var(--text-secondary);
     margin-top: 0.5rem;
 }
+
+/* Preset save row in task form */
+.preset-save-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.preset-name-input {
+    flex: 1;
+}
+
+.btn-secondary {
+    padding: 0.5rem 1rem;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: background 0.15s;
+}
+
+.btn-secondary:hover {
+    background: var(--bg-card);
+}
+
+/* Next date preview in VRT completion */
+.next-date-preview {
+    font-weight: 500;
+    color: var(--accent);
+}
+
+.allowed-days-badges {
+    display: flex;
+    gap: 0.375rem;
+    flex-wrap: wrap;
+}
+
+.badge {
+    padding: 0.25rem 0.5rem;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    font-size: 0.75rem;
+}

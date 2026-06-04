@@ -103,12 +103,12 @@ Optional:
     </div>
 </template>
 
-<!-- Recurring/Variable Recurring/Workout Fields -->
-<template x-if="form.type === 'recurring' || form.type === 'variable_recurring' || form.type === 'workout'">
+<!-- Recurring/Workout Fields (NOT variable_recurring) -->
+<template x-if="form.type === 'recurring' || form.type === 'workout'">
     <div class="type-specific-fields">
         <div class="form-group">
             <label for="interval_type">Recurrence Interval</label>
-            <select id="interval_type" x-model="form.recurrence.interval_type" 
+            <select id="interval_type" x-model="form.recurrence.interval_type"
                     {% if useFormNames %}name="interval_type"{% endif %} required>
                 <option value="daily">Daily</option>
                 <option value="weekly">Weekly</option>
@@ -119,7 +119,7 @@ Optional:
 
         <div class="form-group">
             <label for="interval_multiple">Every X intervals</label>
-            <input type="number" id="interval_multiple" x-model.number="form.recurrence.interval_multiple" 
+            <input type="number" id="interval_multiple" x-model.number="form.recurrence.interval_multiple"
                    {% if useFormNames %}name="interval_multiple"{% endif %} min="1" value="1">
             <span class="form-hint">e.g., 2 = every 2 days/weeks/months</span>
         </div>
@@ -141,39 +141,68 @@ Optional:
         <!-- Monthly: day of month -->
         <div class="form-group" x-show="form.recurrence.interval_type === 'monthly'">
             <label for="day_of_month">Days of Month (comma-separated)</label>
-            <input type="text" id="day_of_month" x-model="form.recurrence.day_of_month" 
+            <input type="text" id="day_of_month" x-model="form.recurrence.day_of_month"
                    {% if useFormNames %}name="day_of_month"{% endif %} placeholder="e.g., 1,15">
         </div>
 
         <!-- Yearly: month selection -->
         <div class="form-group" x-show="form.recurrence.interval_type === 'yearly'">
             <label for="month_of_year">Months (comma-separated, 1-12)</label>
-            <input type="text" id="month_of_year" x-model="form.recurrence.month_of_year" 
+            <input type="text" id="month_of_year" x-model="form.recurrence.month_of_year"
                    {% if useFormNames %}name="month_of_year"{% endif %} placeholder="e.g., 1,6">
         </div>
 
         <div class="form-group">
             <label for="start_date">Start Date</label>
-            <input type="date" id="start_date" x-model="form.recurrence.start_date" 
+            <input type="date" id="start_date" x-model="form.recurrence.start_date"
                    {% if useFormNames %}name="start_date"{% endif %}>
         </div>
 
         <div class="form-group">
             <label for="end_date">End Date (optional)</label>
-            <input type="date" id="end_date" x-model="form.recurrence.end_date" 
+            <input type="date" id="end_date" x-model="form.recurrence.end_date"
                    {% if useFormNames %}name="end_date"{% endif %}>
         </div>
 
         <div class="form-group">
             <label for="scheduled_time">Fixed Time (optional)</label>
-            <input type="time" id="scheduled_time" x-model="form.scheduled_time" 
+            <input type="time" id="scheduled_time" x-model="form.scheduled_time"
                    {% if useFormNames %}name="scheduled_time"{% endif %}>
             <span class="form-hint">If set, this task will be scheduled at this exact time each day</span>
         </div>
+    </div>
+</template>
 
-        <template x-if="form.type === 'variable_recurring'">
-            <span class="form-hint">After completion, you'll be prompted for when this should next occur</span>
-        </template>
+<!-- Variable Recurring Fields -->
+<template x-if="form.type === 'variable_recurring'">
+    <div class="type-specific-fields">
+        <div class="form-group">
+            <label for="days_until_next">Default days between occurrences</label>
+            <input type="number" id="days_until_next" x-model.number="form.recurrence.interval_multiple"
+                   {% if useFormNames %}name="interval_multiple"{% endif %} min="1" value="7">
+            <span class="form-hint">Used as the default when completing this task</span>
+        </div>
+
+        <div class="form-group">
+            <label>Allowed Days of Week</label>
+            <div class="checkbox-grid">
+                <label><input type="checkbox" value="0" x-model="allowedDays"> Sun</label>
+                <label><input type="checkbox" value="1" x-model="allowedDays"> Mon</label>
+                <label><input type="checkbox" value="2" x-model="allowedDays"> Tue</label>
+                <label><input type="checkbox" value="3" x-model="allowedDays"> Wed</label>
+                <label><input type="checkbox" value="4" x-model="allowedDays"> Thu</label>
+                <label><input type="checkbox" value="5" x-model="allowedDays"> Fri</label>
+                <label><input type="checkbox" value="6" x-model="allowedDays"> Sat</label>
+            </div>
+            <span class="form-hint">Leave unchecked for any day. If set, the next occurrence will skip to the nearest allowed day.</span>
+        </div>
+
+        <div class="form-group">
+            <label for="start_date">First occurrence</label>
+            <input type="date" id="start_date" x-model="form.recurrence.start_date"
+                   {% if useFormNames %}name="start_date"{% endif %}>
+            <span class="form-hint">Defaults to today if not set</span>
+        </div>
     </div>
 </template>
 

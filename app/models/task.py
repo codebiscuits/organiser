@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, Time, Text, CheckConstraint
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, Time, Text, CheckConstraint, ForeignKey
 from sqlalchemy.sql import func
 import uuid
 
@@ -25,6 +25,8 @@ class Task(Base):
     deferred_count = Column(Integer, default=0)
     snooze_until = Column(String)  # date string YYYY-MM-DD; hide task until this date
     manual_scheduled_time = Column(DateTime)  # user-set time from timeline drag-and-drop
+    preset_id = Column(Integer, ForeignKey("task_presets.id"), nullable=True)
+    allowed_days = Column(String)  # comma-separated day indices, Sunday=0
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 

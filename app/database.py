@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from typing import Generator
 
@@ -10,6 +10,20 @@ engine = create_engine(
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+def run_migrations(eng):
+    migrations = [
+        "ALTER TABLE tasks ADD COLUMN preset_id INTEGER",
+        "ALTER TABLE tasks ADD COLUMN allowed_days VARCHAR",
+    ]
+    with eng.connect() as conn:
+        for sql in migrations:
+            try:
+                conn.execute(text(sql))
+                conn.commit()
+            except Exception:
+                conn.rollback()
 
 
 def get_db() -> Generator[Session, None, None]:

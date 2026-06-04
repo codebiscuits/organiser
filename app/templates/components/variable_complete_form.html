@@ -1,4 +1,19 @@
-<div class="modal-overlay" id="variable-complete-modal">
+<div class="modal-overlay" id="variable-complete-modal" x-data="{
+    daysUntilNext: {{ preset.interval_multiple if preset and preset.interval_multiple else 7 }},
+    allowedDays: [{{ task.allowed_days if task.allowed_days else '' }}],
+    dayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+    get nextDate() {
+        let d = new Date();
+        d.setDate(d.getDate() + parseInt(this.daysUntilNext) || 0);
+        if (this.allowedDays.length > 0) {
+            for (let i = 0; i < 7; i++) {
+                if (this.allowedDays.includes(d.getDay())) break;
+                d.setDate(d.getDate() + 1);
+            }
+        }
+        return d.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' });
+    }
+}">
     <div class="modal-content">
         <h2>When next?</h2>
         <p class="modal-task-title">{{ task.title }}</p>
@@ -9,7 +24,24 @@
         >
             <div class="form-group">
                 <label for="days_until_next">Days until next occurrence</label>
-                <input type="number" id="days_until_next" name="days_until_next" min="1" value="7" required autofocus>
+                <input type="number" id="days_until_next" name="days_until_next" min="1"
+                       x-model.number="daysUntilNext" required autofocus>
+            </div>
+
+            {% if task.allowed_days %}
+            <div class="form-group">
+                <label>Allowed days</label>
+                <div class="allowed-days-badges">
+                    <template x-for="d in allowedDays" :key="d">
+                        <span class="badge" x-text="dayNames[d]"></span>
+                    </template>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="form-group">
+                <label>Next occurrence</label>
+                <span class="next-date-preview" x-text="nextDate"></span>
             </div>
 
             <div class="form-actions">

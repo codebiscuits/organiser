@@ -1,6 +1,11 @@
 <div class="modal-overlay" x-data="{
     submitting: false,
     selectedDays: [],
+    allowedDays: [],
+    presets: [],
+    selectedPresetId: '',
+    presetName: '',
+    showPresetSave: false,
     form: {
         type: '',
         title: '',
@@ -16,12 +21,77 @@
         location: '',
         recurrence: {
             interval_type: 'daily',
-            interval_multiple: 1,
+            interval_multiple: 7,
             day_of_week: null,
             day_of_month: null,
             month_of_year: null,
             start_date: null,
             end_date: null
+        }
+    },
+    applyPreset(id) {
+        if (!id) return;
+        const p = this.presets.find(x => x.id == id);
+        if (!p) return;
+        this.form.type = p.type || '';
+        this.form.title = p.title || '';
+        this.form.notes = p.notes || '';
+        this.form.estimated_duration = p.estimated_duration;
+        this.form.importance = p.importance || 2;
+        this.form.urgency = p.urgency || 2;
+        this.form.allow_afternoon = p.allow_afternoon || false;
+        this.form.deadline_at = p.deadline_at;
+        this.form.scheduled_at = p.scheduled_at;
+        this.form.prep_duration = p.prep_duration;
+        this.form.scheduled_time = p.scheduled_time;
+        this.form.location = p.location || '';
+        this.form.recurrence.interval_type = p.interval_type || 'daily';
+        this.form.recurrence.interval_multiple = p.interval_multiple || 7;
+        this.form.recurrence.day_of_week = p.day_of_week;
+        this.form.recurrence.day_of_month = p.day_of_month;
+        this.form.recurrence.month_of_year = p.month_of_year;
+        this.selectedDays = p.day_of_week ? p.day_of_week.split(',') : [];
+        this.allowedDays = p.allowed_days ? p.allowed_days.split(',') : [];
+    },
+    async saveAsPreset() {
+        if (!this.presetName.trim()) return;
+        const payload = {
+            name: this.presetName.trim(),
+            type: this.form.type,
+            title: this.form.title || null,
+            notes: this.form.notes || null,
+            estimated_duration: this.form.estimated_duration,
+            importance: this.form.importance,
+            urgency: this.form.urgency,
+            allow_afternoon: this.form.allow_afternoon,
+            prep_duration: this.form.prep_duration,
+            scheduled_time: this.form.scheduled_time || null,
+            location: this.form.location || null,
+            interval_type: this.form.type === 'variable_recurring' ? 'daily' : (this.form.recurrence.interval_type || null),
+            interval_multiple: this.form.recurrence.interval_multiple || null,
+            day_of_week: this.selectedDays.length > 0 ? this.selectedDays.sort().join(',') : null,
+            day_of_month: this.form.recurrence.day_of_month || null,
+            month_of_year: this.form.recurrence.month_of_year || null,
+            allowed_days: this.allowedDays.length > 0 ? this.allowedDays.sort().join(',') : null,
+        };
+        try {
+            const resp = await fetch('/presets/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (resp.ok) {
+                const saved = await resp.json();
+                this.presets.push(saved);
+                this.selectedPresetId = String(saved.id);
+                this.showPresetSave = false;
+                this.presetName = '';
+            } else {
+                const error = await resp.json();
+                alert('Error saving preset: ' + (error.detail || 'Unknown error'));
+            }
+        } catch (err) {
+            alert('Error saving preset: ' + err.message);
         }
     },
     showUrgency() {
@@ -54,7 +124,7 @@
         if (this.form.type === 'deadline') {
             payload.deadline_at = this.form.deadline_at;
         }
-        if (this.form.type === 'recurring' || this.form.type === 'variable_recurring' || this.form.type === 'workout') {
+        if (this.form.type === 'recurring' || this.form.type === 'workout') {
             payload.recurrence = {
                 interval_type: this.form.recurrence.interval_type,
                 interval_multiple: this.form.recurrence.interval_multiple || 1
@@ -78,6 +148,21 @@
                 payload.scheduled_time = this.form.scheduled_time;
             }
         }
+        if (this.form.type === 'variable_recurring') {
+            payload.recurrence = {
+                interval_type: 'daily',
+                interval_multiple: this.form.recurrence.interval_multiple || 7,
+            };
+            if (this.form.recurrence.start_date) {
+                payload.recurrence.start_date = this.form.recurrence.start_date + 'T00:00:00';
+            }
+            if (this.selectedPresetId) {
+                payload.preset_id = parseInt(this.selectedPresetId);
+            }
+            if (this.allowedDays.length > 0) {
+                payload.allowed_days = this.allowedDays.sort().join(',');
+            }
+        }
         try {
             const response = await fetch('/tasks/', {
                 method: 'POST',
@@ -97,16 +182,39 @@
             this.submitting = false;
         }
     }
-}" @click.self="closeModal()">
+}" x-init="fetch('/presets/').then(r => r.json()).then(d => presets = d).catch(() => {})" @click.self="closeModal()">
     <div class="modal-content">
         <div class="modal-header">
             <h2>Add New Task</h2>
             <button class="modal-close" @click="closeModal()">&times;</button>
         </div>
-        
+
         <form @submit.prevent="submitForm()" class="task-form">
+            <!-- Preset Dropdown -->
+            <div class="form-group">
+                <label for="preset">Load from Preset</label>
+                <select id="preset" x-model="selectedPresetId" @change="applyPreset(selectedPresetId)">
+                    <option value="">-- No preset --</option>
+                    <template x-for="p in presets" :key="p.id">
+                        <option :value="p.id" x-text="p.name"></option>
+                    </template>
+                </select>
+            </div>
+
             {% set useFormNames = false %}
             {% include "components/_task_form_fields.html" %}
+
+            <!-- Save as Preset -->
+            <div class="form-group" x-show="form.type">
+                <div x-show="!showPresetSave">
+                    <button type="button" class="btn-secondary" @click="showPresetSave = true">Save as Preset</button>
+                </div>
+                <div x-show="showPresetSave" class="preset-save-row">
+                    <input type="text" x-model="presetName" placeholder="Preset name..." class="preset-name-input">
+                    <button type="button" class="btn-primary" @click="saveAsPreset()" :disabled="!presetName.trim()">Save</button>
+                    <button type="button" class="btn-secondary" @click="showPresetSave = false; presetName = ''">Cancel</button>
+                </div>
+            </div>
 
             <!-- Submit -->
             <div class="form-actions">

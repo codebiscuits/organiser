@@ -250,6 +250,8 @@ async def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
         prep_duration=task_data.prep_duration,
         scheduled_time=task_data.scheduled_time,
         location=task_data.location,
+        preset_id=task_data.preset_id,
+        allowed_days=task_data.allowed_days,
         status="pending",
     )
     db.add(task)
@@ -359,16 +361,22 @@ async def get_variable_complete_form(
     db: Session = Depends(get_db)
 ):
     """Return the 'when next?' modal for a variable recurring task."""
+    from app.models.preset import TaskPreset
+
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     if task.type != "variable_recurring":
         raise HTTPException(status_code=400, detail="Task is not variable recurring")
 
+    preset = None
+    if task.preset_id:
+        preset = db.query(TaskPreset).filter(TaskPreset.id == task.preset_id).first()
+
     return templates.TemplateResponse(
         request,
         "components/variable_complete_form.html",
-        {"task": task},
+        {"task": task, "preset": preset},
     )
 
 
@@ -400,6 +408,13 @@ async def complete_variable_recurring_task(
     ).delete()
 
     next_date = date.today() + timedelta(days=days_until_next)
+    if task.allowed_days:
+        allowed = [int(d.strip()) for d in task.allowed_days.split(",")]
+        python_allowed = [(d - 1) % 7 for d in allowed]
+        for _ in range(7):
+            if next_date.weekday() in python_allowed:
+                break
+            next_date += timedelta(days=1)
     db.add(Projection(task_id=task_id, due_date=next_date))
 
     db.commit()
@@ -586,7 +601,11 @@ async def update_task(task_id: str, task_data: TaskUpdate, db: Session = Depends
         task.scheduled_time = task_data.scheduled_time
     if task_data.location is not None:
         task.location = task_data.location
-    
+    if task_data.allowed_days is not None:
+        task.allowed_days = task_data.allowed_days
+    if task_data.preset_id is not None:
+        task.preset_id = task_data.preset_id
+
     if task_data.recurrence:
         existing_recurrence = db.query(Recurrence).filter(Recurrence.task_id == task_id).first()
         if existing_recurrence:

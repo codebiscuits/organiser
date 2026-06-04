@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Edit' if preset else 'New' }} Preset - Admin - Life Organiser{% endblock %}
+
+{% block content %}
+<section class="admin-preset-form" x-data="presetForm()">
+    <h2>{{ 'Edit' if preset else 'New' }} Preset</h2>
+
+    <form method="POST" action="{{ '/admin/presets/' ~ preset.id if preset else '/admin/presets' }}" class="task-form">
+        <div class="form-group">
+            <label for="name">Preset Name</label>
+            <input type="text" id="name" name="name" required placeholder="e.g., Weekly Cleaning"
+                   value="{{ preset.name if preset else '' }}">
+        </div>
+
+        <div class="form-group">
+            <label for="type">Task Type</label>
+            <select id="type" name="type" x-model="form.type" required>
+                <option value="">Select type...</option>
+                <option value="errand">One-off Errand</option>
+                <option value="appointment">Appointment</option>
+                <option value="deadline">Deadline</option>
+                <option value="recurring">Recurring Task</option>
+                <option value="variable_recurring">Variable Recurring</option>
+                <option value="workout">Workout</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="title">Default Title</label>
+            <input type="text" id="title" name="title" placeholder="Task title"
+                   value="{{ preset.title if preset and preset.title else '' }}">
+        </div>
+
+        <div class="form-group">
+            <label for="estimated_duration">Estimated Duration (minutes)</label>
+            <input type="number" id="estimated_duration" name="estimated_duration" min="1"
+                   value="{{ preset.estimated_duration if preset and preset.estimated_duration else '' }}">
+        </div>
+
+        <div class="form-group">
+            <label for="importance">Importance</label>
+            <select id="importance" name="importance">
+                <option value="1" {{ 'selected' if preset and preset.importance == 1 }}>1 - Low</option>
+                <option value="2" {{ 'selected' if not preset or preset.importance == 2 or not preset.importance }}>2 - Medium</option>
+                <option value="3" {{ 'selected' if preset and preset.importance == 3 }}>3 - High</option>
+            </select>
+        </div>
+
+        <div class="form-group" x-show="['errand', 'recurring', 'variable_recurring', 'workout'].includes(form.type)">
+            <label for="urgency">Urgency</label>
+            <select id="urgency" name="urgency">
+                <option value="1" {{ 'selected' if preset and preset.urgency == 1 }}>1 - Low</option>
+                <option value="2" {{ 'selected' if not preset or preset.urgency == 2 or not preset.urgency }}>2 - Medium</option>
+                <option value="3" {{ 'selected' if preset and preset.urgency == 3 }}>3 - High</option>
+            </select>
+        </div>
+
+        <div class="form-group checkbox-group" x-show="['errand', 'recurring', 'variable_recurring', 'workout'].includes(form.type)">
+            <label>
+                <input type="checkbox" name="allow_afternoon" value="true"
+                       {{ 'checked' if preset and preset.allow_afternoon }}>
+                Allow afternoon scheduling (3pm-6pm)
+            </label>
+        </div>
+
+        <div class="form-group" x-show="form.type === 'appointment'">
+            <label for="prep_duration">Prep/Travel Time (minutes)</label>
+            <input type="number" id="prep_duration" name="prep_duration" min="0"
+                   value="{{ preset.prep_duration if preset and preset.prep_duration else '' }}">
+        </div>
+
+        <div class="form-group" x-show="form.type === 'appointment'">
+            <label for="location">Location</label>
+            <input type="text" id="location" name="location"
+                   value="{{ preset.location if preset and preset.location else '' }}">
+        </div>
+
+        <template x-if="['recurring', 'variable_recurring', 'workout'].includes(form.type)">
+            <div class="type-specific-fields">
+                <div class="form-group">
+                    <label for="interval_type">Recurrence Interval</label>
+                    <select id="interval_type" name="interval_type" x-model="intervalType">
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="interval_multiple">Every X intervals</label>
+                    <input type="number" id="interval_multiple" name="interval_multiple" min="1"
+                           value="{{ preset.interval_multiple if preset and preset.interval_multiple else 1 }}">
+                </div>
+
+                <div class="form-group" x-show="intervalType === 'weekly'">
+                    <label>Days of Week</label>
+                    <div class="checkbox-grid">
+                        <label><input type="checkbox" name="day_of_week" value="0" {{ 'checked' if preset and preset.day_of_week and '0' in preset.day_of_week.split(',') }}> Sun</label>
+                        <label><input type="checkbox" name="day_of_week" value="1" {{ 'checked' if preset and preset.day_of_week and '1' in preset.day_of_week.split(',') }}> Mon</label>
+                        <label><input type="checkbox" name="day_of_week" value="2" {{ 'checked' if preset and preset.day_of_week and '2' in preset.day_of_week.split(',') }}> Tue</label>
+                        <label><input type="checkbox" name="day_of_week" value="3" {{ 'checked' if preset and preset.day_of_week and '3' in preset.day_of_week.split(',') }}> Wed</label>
+                        <label><input type="checkbox" name="day_of_week" value="4" {{ 'checked' if preset and preset.day_of_week and '4' in preset.day_of_week.split(',') }}> Thu</label>
+                        <label><input type="checkbox" name="day_of_week" value="5" {{ 'checked' if preset and preset.day_of_week and '5' in preset.day_of_week.split(',') }}> Fri</label>
+                        <label><input type="checkbox" name="day_of_week" value="6" {{ 'checked' if preset and preset.day_of_week and '6' in preset.day_of_week.split(',') }}> Sat</label>
+                    </div>
+                </div>
+
+                <div class="form-group" x-show="intervalType === 'monthly'">
+                    <label for="day_of_month">Days of Month (comma-separated)</label>
+                    <input type="text" id="day_of_month" name="day_of_month"
+                           value="{{ preset.day_of_month if preset and preset.day_of_month else '' }}">
+                </div>
+
+                <div class="form-group" x-show="intervalType === 'yearly'">
+                    <label for="month_of_year">Months (comma-separated, 1-12)</label>
+                    <input type="text" id="month_of_year" name="month_of_year"
+                           value="{{ preset.month_of_year if preset and preset.month_of_year else '' }}">
+                </div>
+
+                <div class="form-group">
+                    <label for="scheduled_time">Fixed Time (optional)</label>
+                    <input type="time" id="scheduled_time" name="scheduled_time"
+                           value="{{ preset.scheduled_time.strftime('%H:%M') if preset and preset.scheduled_time else '' }}">
+                </div>
+            </div>
+        </template>
+
+        <template x-if="form.type === 'variable_recurring'">
+            <div class="form-group">
+                <label>Allowed Days of Week</label>
+                <div class="checkbox-grid">
+                    <label><input type="checkbox" name="allowed_days" value="0" {{ 'checked' if preset and preset.allowed_days and '0' in preset.allowed_days.split(',') }}> Sun</label>
+                    <label><input type="checkbox" name="allowed_days" value="1" {{ 'checked' if preset and preset.allowed_days and '1' in preset.allowed_days.split(',') }}> Mon</label>
+                    <label><input type="checkbox" name="allowed_days" value="2" {{ 'checked' if preset and preset.allowed_days and '2' in preset.allowed_days.split(',') }}> Tue</label>
+                    <label><input type="checkbox" name="allowed_days" value="3" {{ 'checked' if preset and preset.allowed_days and '3' in preset.allowed_days.split(',') }}> Wed</label>
+                    <label><input type="checkbox" name="allowed_days" value="4" {{ 'checked' if preset and preset.allowed_days and '4' in preset.allowed_days.split(',') }}> Thu</label>
+                    <label><input type="checkbox" name="allowed_days" value="5" {{ 'checked' if preset and preset.allowed_days and '5' in preset.allowed_days.split(',') }}> Fri</label>
+                    <label><input type="checkbox" name="allowed_days" value="6" {{ 'checked' if preset and preset.allowed_days and '6' in preset.allowed_days.split(',') }}> Sat</label>
+                </div>
+                <span class="form-hint">If set, the next occurrence will skip to the nearest allowed day</span>
+            </div>
+        </template>
+
+        <div class="form-group">
+            <label for="notes">Notes (optional)</label>
+            <textarea id="notes" name="notes" rows="3">{{ preset.notes if preset and preset.notes else '' }}</textarea>
+        </div>
+
+        <div class="form-actions">
+            <a href="/admin/presets" class="btn-cancel">Cancel</a>
+            <button type="submit" class="btn-submit">{{ 'Update' if preset else 'Create' }} Preset</button>
+        </div>
+    </form>
+</section>
+
+<style>
+.admin-preset-form h2 {
+    margin-bottom: 1.5rem;
+}
+
+.task-form {
+    background: var(--bg-card);
+    padding: 1.5rem;
+    border-radius: 12px;
+}
+</style>
+
+<script>
+function presetForm() {
+    return {
+        form: {
+            type: '{{ preset.type if preset else '' }}'
+        },
+        intervalType: '{{ preset.interval_type if preset and preset.interval_type else "daily" }}'
+    }
+}
+</script>
+{% endblock %}

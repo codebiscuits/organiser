@@ -33,9 +33,11 @@ class TaskCreate(BaseModel):
     deadline_at: datetime | None = None
     scheduled_at: datetime | None = None
     prep_duration: int | None = None
-    scheduled_time: time | None = None  # for recurring tasks with fixed daily time
+    scheduled_time: time | None = None
     location: str | None = None
     recurrence: RecurrenceCreate | None = None
+    preset_id: int | None = None
+    allowed_days: str | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -53,6 +55,8 @@ class TaskUpdate(BaseModel):
     location: str | None = None
     status: str | None = None
     recurrence: RecurrenceCreate | None = None
+    preset_id: int | None = None
+    allowed_days: str | None = None
 
 
 class TaskResponse(BaseModel):
@@ -71,6 +75,8 @@ class TaskResponse(BaseModel):
     location: str | None
     status: str
     deferred_count: int
+    preset_id: int | None = None
+    allowed_days: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -93,3 +99,51 @@ class WorkoutCompleteRequest(BaseModel):
     reps: int = Field(..., ge=1)
     weight_kg: float = Field(..., ge=0)
     intensity: str = Field(..., pattern="^(heavy|light)$")
+
+
+class TaskPresetCreate(BaseModel):
+    name: str
+    type: TaskType
+    title: str | None = None
+    notes: str | None = None
+    estimated_duration: int | None = None
+    importance: int | None = Field(default=None, ge=1, le=3)
+    urgency: int | None = Field(default=None, ge=1, le=3)
+    allow_afternoon: bool = False
+    deadline_at: datetime | None = None
+    scheduled_at: datetime | None = None
+    prep_duration: int | None = None
+    scheduled_time: time | None = None
+    location: str | None = None
+    interval_type: str | None = None
+    interval_multiple: int | None = Field(default=None, ge=1)
+    day_of_week: str | None = None
+    day_of_month: str | None = None
+    month_of_year: str | None = None
+    allowed_days: str | None = None
+
+
+class TaskPresetResponse(BaseModel):
+    id: int
+    name: str
+    type: str
+    title: str | None
+    notes: str | None
+    estimated_duration: int | None
+    importance: int | None
+    urgency: int | None
+    allow_afternoon: bool
+    deadline_at: datetime | None
+    scheduled_at: datetime | None
+    prep_duration: int | None
+    scheduled_time: time | None
+    location: str | None
+    interval_type: str | None
+    interval_multiple: int | None
+    day_of_week: str | None
+    day_of_month: str | None
+    month_of_year: str | None
+    allowed_days: str | None
+
+    class Config:
+        from_attributes = True

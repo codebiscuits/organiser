@@ -1,6 +1,7 @@
 <div class="modal-overlay" x-data="{
     submitting: false,
     selectedDays: {{ recurrence.day_of_week.split(',') if recurrence and recurrence.day_of_week else [] | tojson }},
+    allowedDays: {{ task.allowed_days.split(',') if task.allowed_days else [] | tojson }},
     form: {
         type: '{{ task.type }}',
         title: '{{ task.title | e }}',
@@ -54,7 +55,7 @@
         if (this.form.type === 'deadline') {
             payload.deadline_at = this.form.deadline_at;
         }
-        if (this.form.type === 'recurring' || this.form.type === 'variable_recurring' || this.form.type === 'workout') {
+        if (this.form.type === 'recurring' || this.form.type === 'workout') {
             payload.recurrence = {
                 interval_type: this.form.recurrence.interval_type,
                 interval_multiple: this.form.recurrence.interval_multiple || 1
@@ -76,6 +77,18 @@
             }
             if (this.form.scheduled_time) {
                 payload.scheduled_time = this.form.scheduled_time;
+            }
+        }
+        if (this.form.type === 'variable_recurring') {
+            payload.recurrence = {
+                interval_type: 'daily',
+                interval_multiple: this.form.recurrence.interval_multiple || 7,
+            };
+            if (this.form.recurrence.start_date) {
+                payload.recurrence.start_date = this.form.recurrence.start_date + 'T00:00:00';
+            }
+            if (this.allowedDays.length > 0) {
+                payload.allowed_days = this.allowedDays.sort().join(',');
             }
         }
         try {

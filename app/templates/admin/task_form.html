@@ -51,6 +51,7 @@
 function taskForm() {
     return {
         selectedDays: [{% if recurrence and recurrence.day_of_week %}{{ recurrence.day_of_week.split(',')|map('tojson')|join(',') }}{% endif %}],
+        allowedDays: [{% if task and task.allowed_days %}{{ task.allowed_days.split(',')|map('tojson')|join(',') }}{% endif %}],
         form: {
             type: '{{ task.type if task else '' }}',
             title: '{{ task.title|e if task else '' }}',
