@@ -16,6 +16,8 @@ def run_migrations(eng):
     migrations = [
         "ALTER TABLE tasks ADD COLUMN preset_id INTEGER",
         "ALTER TABLE tasks ADD COLUMN allowed_days VARCHAR",
+        "ALTER TABLE completed_tasks ADD COLUMN task_type VARCHAR",
+        "ALTER TABLE completed_tasks ADD COLUMN task_title VARCHAR",
     ]
     with eng.connect() as conn:
         for sql in migrations:

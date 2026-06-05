@@ -328,6 +328,8 @@ async def complete_task(
         task_id=task.id,
         actual_duration=completion_data.actual_duration if completion_data else None,
         notes=completion_data.notes if completion_data else None,
+        task_type=task.type,
+        task_title=task.title,
     )
     db.add(completed)
 
@@ -390,6 +392,8 @@ async def complete_variable_recurring_task(
         task_id=task.id,
         actual_duration=actual_duration,
         notes=notes,
+        task_type=task.type,
+        task_title=task.title,
     )
     db.add(completed)
 
@@ -469,6 +473,8 @@ async def complete_workout_task(
 
     completed = CompletedTask(
         task_id=task.id,
+        task_type=task.type,
+        task_title=task.title,
     )
     db.add(completed)
 

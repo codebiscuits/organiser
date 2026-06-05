@@ -33,9 +33,11 @@ class Task(Base):
 
 class CompletedTask(Base):
     __tablename__ = "completed_tasks"
-    
+
     id = Column(Integer, primary_key=True, autoincrement=True)
-    task_id = Column(String)
+    task_id = Column(String)  # optional reference; may be null if task was later deleted
     completed_at = Column(DateTime, server_default=func.now())
     actual_duration = Column(Integer)  # minutes
     notes = Column(Text)
+    task_type = Column(String)  # snapshot at completion time
+    task_title = Column(String)  # snapshot at completion time

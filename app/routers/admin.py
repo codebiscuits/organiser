@@ -618,13 +618,14 @@ async def admin_completed_tasks(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
 ):
+    from sqlalchemy import func as sqlfunc
     query = db.query(
         CompletedTask.id,
         CompletedTask.task_id,
         CompletedTask.completed_at,
         CompletedTask.actual_duration,
         CompletedTask.notes,
-        Task.title.label("task_title"),
+        sqlfunc.coalesce(CompletedTask.task_title, Task.title).label("task_title"),
     ).outerjoin(Task, CompletedTask.task_id == Task.id)
 
     if from_date:

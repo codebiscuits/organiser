@@ -198,6 +198,8 @@ class TestCompleteTask:
 
         completed = db.query(CompletedTask).filter(CompletedTask.task_id == task_id).first()
         assert completed is not None
+        assert completed.task_title == "Buy milk"
+        assert completed.task_type == "errand"
 
     def test_complete_appointment_deletes_task(self, client, db):
         data = create_task(client, APPOINTMENT_PAYLOAD)
@@ -834,6 +836,17 @@ class TestAdminTaskCRUD:
 
         completed = db.query(CompletedTask).filter(CompletedTask.task_id == task_id).first()
         assert completed is not None
+
+    def test_completed_task_snapshot_survives_task_deletion(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+        client.post(f"/tasks/{task_id}/complete")
+
+        # errand is deleted on completion — verify snapshot is still intact
+        assert db.query(Task).filter(Task.id == task_id).first() is None
+        completed = db.query(CompletedTask).filter(CompletedTask.task_id == task_id).first()
+        assert completed.task_title == "Buy milk"
+        assert completed.task_type == "errand"
 
 
 # ---------------------------------------------------------------------------
