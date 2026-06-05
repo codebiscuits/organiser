@@ -20,7 +20,7 @@
         <form
             hx-post="/tasks/{{ task.id }}/complete/variable"
             hx-swap="none"
-            hx-on::after-request="this.closest('.modal-overlay').remove()"
+            hx-on::after-request="htmx.trigger(document.body, 'taskUpdated'); this.closest('.modal-overlay').remove()"
         >
             <div class="form-group">
                 <label for="days_until_next">Days until next occurrence</label>

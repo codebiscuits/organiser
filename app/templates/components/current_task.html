@@ -50,6 +50,7 @@
             hx-post="/tasks/{{ task.task.id }}/complete"
             hx-trigger="click"
             hx-swap="none"
+            hx-on::after-request="htmx.trigger(document.body, 'taskUpdated')"
             class="btn-complete-focus"
         >
             ✓ Done

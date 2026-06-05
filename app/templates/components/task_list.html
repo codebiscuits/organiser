@@ -46,6 +46,7 @@
                 hx-post="/tasks/{{ pt.task.id }}/complete"
                 hx-trigger="click"
                 hx-swap="none"
+                hx-on::after-request="htmx.trigger(document.body, 'taskUpdated')"
                 title="Done"
             >✓</button>
             {% endif %}

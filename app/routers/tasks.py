@@ -373,11 +373,13 @@ async def get_variable_complete_form(
     if task.preset_id:
         preset = db.query(TaskPreset).filter(TaskPreset.id == task.preset_id).first()
 
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request,
         "components/variable_complete_form.html",
         {"task": task, "preset": preset},
     )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @router.post("/{task_id}/complete/variable", response_class=HTMLResponse)
@@ -443,7 +445,7 @@ async def get_workout_completion_form(
     intensity = get_todays_intensity(db)
     all_exercises = db.query(Exercise).order_by(Exercise.name).all()
     
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request,
         "components/workout_complete_form.html",
         {
@@ -453,6 +455,8 @@ async def get_workout_completion_form(
             "intensity": intensity,
         },
     )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @router.post("/{task_id}/complete/workout")

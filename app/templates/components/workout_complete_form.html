@@ -6,6 +6,7 @@
             hx-post="/tasks/{{ task.id }}/complete/workout"
             hx-trigger="submit"
             hx-swap="none"
+            hx-on::after-request="htmx.trigger(document.body, 'taskUpdated'); this.closest('.modal-overlay').remove()"
         >
             <input type="hidden" name="intensity" value="{{ intensity }}">
             

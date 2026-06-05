@@ -690,10 +690,10 @@ main {
 
 .timeline-container {
     position: relative;
-    height: 900px; /* 15 hours * 60px */
+    height: 1800px; /* 15 hours * 120px, 2px per minute */
     background: var(--bg-secondary);
     border-radius: 12px;
-    overflow: hidden;
+    overflow: visible;
     margin-bottom: 1rem;
 }
 

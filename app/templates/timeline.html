@@ -13,7 +13,7 @@
         <!-- Time markers -->
         <div class="time-markers">
             {% for hour in range(9, 24) %}
-            <div class="time-marker" style="top: {{ (hour - 9) * 60 }}px;">
+            <div class="time-marker" style="top: {{ (hour - 9) * 120 }}px;">
                 <span class="time-label">{{ '%02d:00' % hour }}</span>
                 <div class="marker-line"></div>
             </div>
@@ -22,13 +22,13 @@
 
         <!-- Window indicators -->
         <div class="window-indicators">
-            <div class="window-band main-window" style="top: 0; height: 360px;">
+            <div class="window-band main-window" style="top: 0; height: 720px;">
                 <span class="window-label">Main</span>
             </div>
-            <div class="window-band afternoon-window" style="top: 360px; height: 180px;">
+            <div class="window-band afternoon-window" style="top: 720px; height: 360px;">
                 <span class="window-label">Afternoon</span>
             </div>
-            <div class="window-band evening-window" style="top: 540px; height: 300px;">
+            <div class="window-band evening-window" style="top: 1080px; height: 600px;">
                 <span class="window-label">Evening</span>
             </div>
         </div>
@@ -36,6 +36,7 @@
         <!-- Draggable task cards -->
         <div class="timeline-tasks" 
              id="timeline-tasks"
+             @dragenter.prevent
              @dragover.prevent
              @drop="handleDrop($event)">
             {% for pt in tasks %}
@@ -46,8 +47,8 @@
                  draggable="{{ 'false' if pt.is_fixed else 'true' }}"
                  @dragstart="handleDragStart($event)"
                  @dragend="handleDragEnd($event)"
-                 style="top: {{ ((pt.scheduled_time.hour - 9) * 60 + pt.scheduled_time.minute) if pt.scheduled_time else 0 }}px; 
-                        height: {{ pt.task.estimated_duration or 30 }}px;">
+                 style="top: {{ ((pt.scheduled_time.hour - 9) * 120 + pt.scheduled_time.minute * 2) if pt.scheduled_time else 0 }}px;
+                        height: {{ (pt.task.estimated_duration or 30) * 2 }}px;">
                 <div class="task-card-content">
                     <span class="task-title">{{ pt.task.title }}</span>
                     <span class="task-time">
@@ -117,20 +118,20 @@ document.addEventListener('alpine:init', () => {
         
         handleDrop(event) {
             if (!this.draggedElement) return;
-            
+
             const container = document.getElementById('timeline-tasks');
             const rect = container.getBoundingClientRect();
             const y = event.clientY - rect.top;
-            
-            // Snap to 15-minute increments
-            const snappedMinutes = Math.round(y / 15) * 15;
-            const snappedY = Math.max(0, Math.min(snappedMinutes, 840)); // 840 = 14 hours * 60
-            
+
+            // Snap to 15-minute increments (30px at 2px/min)
+            const snappedPx = Math.round(y / 30) * 30;
+            const snappedY = Math.max(0, Math.min(snappedPx, 1680)); // 1680 = 14 hours * 120
+
             this.draggedElement.style.top = snappedY + 'px';
-            
-            // Update scheduled time display
-            const hour = Math.floor(snappedY / 60) + 9;
-            const minute = snappedY % 60;
+
+            // Update scheduled time display (2px per minute)
+            const hour = Math.floor(snappedY / 120) + 9;
+            const minute = (snappedY % 120) / 2;
             const timeSpan = this.draggedElement.querySelector('.task-time');
             const durationSpan = this.draggedElement.querySelector('.task-duration');
             const durationText = durationSpan ? durationSpan.outerHTML : '';
@@ -143,34 +144,30 @@ document.addEventListener('alpine:init', () => {
         reorderCards() {
             const container = document.getElementById('timeline-tasks');
             const cards = Array.from(container.querySelectorAll('.timeline-task-card'));
-            
-            // Check for overlaps and resolve them
+
             cards.sort((a, b) => parseInt(a.style.top) - parseInt(b.style.top));
-            
+
             let cursor = 0;
             for (const card of cards) {
                 const cardTop = parseInt(card.style.top) || 0;
-                const duration = parseInt(card.dataset.duration) || 30;
-                
+                const durationPx = (parseInt(card.dataset.duration) || 30) * 2;
+
                 if (card.dataset.isFixed === 'true') {
-                    // Fixed cards stay where they are, move cursor past them
-                    cursor = Math.max(cursor, cardTop + duration);
+                    cursor = Math.max(cursor, cardTop + durationPx);
                     continue;
                 }
-                
-                // If this card overlaps with cursor, push it down
+
                 if (cardTop < cursor) {
                     card.style.top = cursor + 'px';
-                    // Update time display
-                    const hour = Math.floor(cursor / 60) + 9;
-                    const minute = cursor % 60;
+                    const hour = Math.floor(cursor / 120) + 9;
+                    const minute = (cursor % 120) / 2;
                     const timeSpan = card.querySelector('.task-time');
                     const durationSpan = card.querySelector('.task-duration');
                     const durationText = durationSpan ? durationSpan.outerHTML : '';
                     timeSpan.innerHTML = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${durationText}`;
                 }
-                
-                cursor = parseInt(card.style.top) + duration;
+
+                cursor = parseInt(card.style.top) + durationPx;
             }
         },
         
@@ -178,8 +175,8 @@ document.addEventListener('alpine:init', () => {
             const cards = document.querySelectorAll('.timeline-task-card:not(.fixed)');
             const order = Array.from(cards).map(card => {
                 const top = parseInt(card.style.top) || 0;
-                const hour = Math.floor(top / 60) + 9;
-                const minute = top % 60;
+                const hour = Math.floor(top / 120) + 9;
+                const minute = (top % 120) / 2;
                 return {
                     task_id: card.dataset.taskId,
                     scheduled_hour: hour,
@@ -215,9 +212,8 @@ document.addEventListener('alpine:init', () => {
                 const card = document.querySelector(`[data-task-id="${item.id}"]`);
                 if (card) {
                     card.style.top = item.top + 'px';
-                    // Restore time display
-                    const hour = Math.floor(item.top / 60) + 9;
-                    const minute = item.top % 60;
+                    const hour = Math.floor(item.top / 120) + 9;
+                    const minute = (item.top % 120) / 2;
                     const timeSpan = card.querySelector('.task-time');
                     const durationSpan = card.querySelector('.task-duration');
                     const durationText = durationSpan ? durationSpan.outerHTML : '';
