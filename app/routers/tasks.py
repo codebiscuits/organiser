@@ -262,7 +262,7 @@ async def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
     db.add(task)
     db.flush()
 
-    if task_data.type in ("recurring", "variable_recurring", "workout") and task_data.recurrence:
+    if task_data.type in ("recurring", "workout") and task_data.recurrence:
         recurrence = Recurrence(
             task_id=task.id,
             interval_type=task_data.recurrence.interval_type,
@@ -286,6 +286,23 @@ async def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
             ).first()
             if not existing:
                 db.add(projection)
+
+    elif task_data.type == "variable_recurring" and task_data.recurrence:
+        recurrence = Recurrence(
+            task_id=task.id,
+            interval_type=task_data.recurrence.interval_type,
+            interval_multiple=task_data.recurrence.interval_multiple,
+            day_of_week=task_data.recurrence.day_of_week,
+            day_of_month=task_data.recurrence.day_of_month,
+            month_of_year=task_data.recurrence.month_of_year,
+            start_date=task_data.recurrence.start_date.date() if task_data.recurrence.start_date else date.today(),
+            end_date=task_data.recurrence.end_date.date() if task_data.recurrence.end_date else None,
+        )
+        db.add(recurrence)
+        db.flush()
+
+        start = recurrence.start_date or date.today()
+        db.add(Projection(task_id=task.id, due_date=start))
 
     if task_data.type == "appointment" and task_data.prep_duration and task_data.scheduled_at:
         prep_task = Task(
@@ -399,7 +416,7 @@ async def complete_variable_recurring_task(
 
     db.query(Projection).filter(
         Projection.task_id == task_id,
-        Projection.due_date == date.today()
+        Projection.due_date >= date.today()
     ).delete()
 
     next_date = date.today() + timedelta(days=days_until_next)
