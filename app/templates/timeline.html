@@ -9,11 +9,11 @@
         <p class="timeline-date">{{ today.strftime('%A, %B %d') }}</p>
     </div>
 
-    <div class="timeline-container">
+    <div class="timeline-container" style="height: {{ (24 - start_hour) * 120 }}px;">
         <!-- Time markers -->
         <div class="time-markers">
-            {% for hour in range(9, 24) %}
-            <div class="time-marker" style="top: {{ (hour - 9) * 120 }}px;">
+            {% for hour in range(start_hour, 24) %}
+            <div class="time-marker" style="top: {{ (hour - start_hour) * 120 }}px;">
                 <span class="time-label">{{ '%02d:00' % hour }}</span>
                 <div class="marker-line"></div>
             </div>
@@ -22,20 +22,27 @@
 
         <!-- Window indicators -->
         <div class="window-indicators">
-            <div class="window-band main-window" style="top: 0; height: 720px;">
+            {% if start_hour < 15 %}
+            <div class="window-band main-window" style="top: 0; height: {{ (15 - start_hour) * 120 }}px;">
                 <span class="window-label">Main</span>
             </div>
-            <div class="window-band afternoon-window" style="top: 720px; height: 360px;">
+            {% endif %}
+            {% if start_hour < 18 %}
+            <div class="window-band afternoon-window" style="top: {{ ([15 - start_hour, 0] | max) * 120 }}px; height: {{ (18 - [15, start_hour] | max) * 120 }}px;">
                 <span class="window-label">Afternoon</span>
             </div>
-            <div class="window-band evening-window" style="top: 1080px; height: 600px;">
+            {% endif %}
+            {% if start_hour < 23 %}
+            <div class="window-band evening-window" style="top: {{ ([18 - start_hour, 0] | max) * 120 }}px; height: {{ (23 - [18, start_hour] | max) * 120 }}px;">
                 <span class="window-label">Evening</span>
             </div>
+            {% endif %}
         </div>
 
         <!-- Draggable task cards -->
-        <div class="timeline-tasks" 
+        <div class="timeline-tasks"
              id="timeline-tasks"
+             data-start-hour="{{ start_hour }}"
              @dragenter.prevent
              @dragover.prevent
              @drop="handleDrop($event)">
@@ -47,7 +54,7 @@
                  draggable="{{ 'false' if pt.is_fixed else 'true' }}"
                  @dragstart="handleDragStart($event)"
                  @dragend="handleDragEnd($event)"
-                 style="top: {{ ((pt.scheduled_time.hour - 9) * 120 + pt.scheduled_time.minute * 2) if pt.scheduled_time else 0 }}px;
+                 style="top: {{ ((pt.scheduled_time.hour - start_hour) * 120 + pt.scheduled_time.minute * 2) if pt.scheduled_time else 0 }}px;
                         height: {{ (pt.task.estimated_duration or 30) * 2 }}px;">
                 <div class="task-card-content">
                     <span class="task-title">{{ pt.task.title }}</span>
@@ -86,7 +93,8 @@ document.addEventListener('alpine:init', () => {
         hasChanges: false,
         originalOrder: [],
         draggedElement: null,
-        
+        startHour: parseInt(document.getElementById('timeline-tasks').dataset.startHour),
+
         init() {
             this.captureOriginalOrder();
         },
@@ -125,12 +133,13 @@ document.addEventListener('alpine:init', () => {
 
             // Snap to 15-minute increments (30px at 2px/min)
             const snappedPx = Math.round(y / 30) * 30;
-            const snappedY = Math.max(0, Math.min(snappedPx, 1680)); // 1680 = 14 hours * 120
+            const maxPx = (23 - this.startHour) * 120;
+            const snappedY = Math.max(0, Math.min(snappedPx, maxPx));
 
             this.draggedElement.style.top = snappedY + 'px';
 
             // Update scheduled time display (2px per minute)
-            const hour = Math.floor(snappedY / 120) + 9;
+            const hour = Math.floor(snappedY / 120) + this.startHour;
             const minute = (snappedY % 120) / 2;
             const timeSpan = this.draggedElement.querySelector('.task-time');
             const durationSpan = this.draggedElement.querySelector('.task-duration');
@@ -159,7 +168,7 @@ document.addEventListener('alpine:init', () => {
 
                 if (cardTop < cursor) {
                     card.style.top = cursor + 'px';
-                    const hour = Math.floor(cursor / 120) + 9;
+                    const hour = Math.floor(cursor / 120) + this.startHour;
                     const minute = (cursor % 120) / 2;
                     const timeSpan = card.querySelector('.task-time');
                     const durationSpan = card.querySelector('.task-duration');
@@ -175,7 +184,7 @@ document.addEventListener('alpine:init', () => {
             const cards = document.querySelectorAll('.timeline-task-card:not(.fixed)');
             const order = Array.from(cards).map(card => {
                 const top = parseInt(card.style.top) || 0;
-                const hour = Math.floor(top / 120) + 9;
+                const hour = Math.floor(top / 120) + this.startHour;
                 const minute = (top % 120) / 2;
                 return {
                     task_id: card.dataset.taskId,
@@ -212,7 +221,7 @@ document.addEventListener('alpine:init', () => {
                 const card = document.querySelector(`[data-task-id="${item.id}"]`);
                 if (card) {
                     card.style.top = item.top + 'px';
-                    const hour = Math.floor(item.top / 120) + 9;
+                    const hour = Math.floor(item.top / 120) + this.startHour;
                     const minute = (item.top % 120) / 2;
                     const timeSpan = card.querySelector('.task-time');
                     const durationSpan = card.querySelector('.task-duration');

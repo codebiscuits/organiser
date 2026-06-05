@@ -91,10 +91,15 @@ async def timeline_view(request: Request, db: Session = Depends(get_db)):
     to reorder flexible tasks.
     """
     prioritised_tasks, _ = get_prioritised_tasks_with_metadata(db, date.today())
+    start_hour = max(9, datetime.now().hour)
+    visible_tasks = [
+        pt for pt in prioritised_tasks
+        if pt.scheduled_time and pt.scheduled_time.hour >= start_hour
+    ]
     return templates.TemplateResponse(
         request,
         "timeline.html",
-        {"tasks": prioritised_tasks, "today": date.today()},
+        {"tasks": visible_tasks, "start_hour": start_hour, "today": date.today()},
     )
 
 
