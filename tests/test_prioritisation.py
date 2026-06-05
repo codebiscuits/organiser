@@ -26,6 +26,7 @@ from app.services.prioritisation import (
     RecurrenceTimescale,
     TimeSlot,
 )
+from app.services.scheduling import get_remaining_capacity, add_minutes_to_time, determine_window
 
 
 class TestCalculateUrgencyForDeadline:
@@ -715,3 +716,452 @@ class TestRecurrenceTimescaleTieBreaking:
         tasks.sort(key=lambda t: t.sort_key(), reverse=True)
 
         assert tasks[0] is deferred
+
+
+# ===========================================================================
+# Phase 1: Scheduling algorithm edge cases
+# ===========================================================================
+
+class TestCalculateGapsOverlapping:
+    def _make_fixed_pt(self, start_hour: int, duration: int = 60) -> PrioritisedTask:
+        task = MagicMock(spec=Task)
+        task.estimated_duration = duration
+        task.prep_duration = 0
+        return PrioritisedTask(
+            task=task,
+            priority_score=9,
+            calculated_urgency=3,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=True,
+            scheduled_time=datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, start_hour, 0),
+        )
+
+    def test_overlapping_fixed_tasks_handled_without_crash(self):
+        fixed = [self._make_fixed_pt(11, 60), self._make_fixed_pt(11, 60)]
+        gaps = calculate_gaps(fixed, FUTURE_DATE, include_afternoon=True)
+        assert len(gaps) == 2
+        assert gaps[0].start == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 9, 0)
+        assert gaps[0].end == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 11, 0)
+        assert gaps[1].start == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 12, 0)
+        assert gaps[1].end == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 18, 0)
+
+    def test_partially_overlapping_fixed_tasks(self):
+        # 10:00 (90 min → ends 11:30) overlaps with 11:00 (60 min → ends 12:00)
+        fixed = [self._make_fixed_pt(10, 90), self._make_fixed_pt(11, 60)]
+        gaps = calculate_gaps(fixed, FUTURE_DATE, include_afternoon=True)
+        assert len(gaps) == 2
+        assert gaps[0].start == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 9, 0)
+        assert gaps[0].end == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 10, 0)
+        assert gaps[1].start == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 12, 0)
+        assert gaps[1].end == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 18, 0)
+
+
+class TestScheduleFullDay:
+    def _make_fixed_pt(self, start_hour: int, duration: int) -> PrioritisedTask:
+        task = MagicMock(spec=Task)
+        task.estimated_duration = duration
+        task.prep_duration = 0
+        return PrioritisedTask(
+            task=task,
+            priority_score=9,
+            calculated_urgency=3,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=True,
+            scheduled_time=datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, start_hour, 0),
+        )
+
+    def _make_flexible_pt(self, duration: int = 60, score: int = 6) -> PrioritisedTask:
+        task = MagicMock(spec=Task)
+        task.estimated_duration = duration
+        task.prep_duration = 0
+        task.allow_afternoon = False
+        task.manual_scheduled_time = None
+        return PrioritisedTask(
+            task=task,
+            priority_score=score,
+            calculated_urgency=2,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=False,
+        )
+
+    def test_full_day_no_flexible_tasks_scheduled(self):
+        # Fixed tasks cover entire 9:00–18:00
+        fixed = [
+            self._make_fixed_pt(9, 120),
+            self._make_fixed_pt(11, 120),
+            self._make_fixed_pt(13, 120),
+            self._make_fixed_pt(15, 180),
+        ]
+        flex = self._make_flexible_pt(60)
+        scheduled = schedule_tasks_into_timeline(fixed, [flex], FUTURE_DATE)
+
+        assert len(scheduled) == 4
+        assert not any(pt.task is flex.task for pt in scheduled)
+
+
+class TestMultipleManualScheduled:
+    def _make_manual(self, hour: int, minute: int = 0, duration: int = 60, score: int = 6) -> PrioritisedTask:
+        task = MagicMock(spec=Task)
+        task.estimated_duration = duration
+        task.prep_duration = 0
+        task.allow_afternoon = False
+        task.manual_scheduled_time = datetime(
+            FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, hour, minute
+        )
+        return PrioritisedTask(
+            task=task,
+            priority_score=score,
+            calculated_urgency=2,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=False,
+        )
+
+    def _make_auto(self, duration: int = 60, score: int = 3) -> PrioritisedTask:
+        task = MagicMock(spec=Task)
+        task.estimated_duration = duration
+        task.prep_duration = 0
+        task.allow_afternoon = False
+        task.manual_scheduled_time = None
+        return PrioritisedTask(
+            task=task,
+            priority_score=score,
+            calculated_urgency=1,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=False,
+        )
+
+    def test_two_manual_scheduled_tasks_both_placed(self):
+        manual_a = self._make_manual(10, score=9)
+        manual_b = self._make_manual(13, score=8)
+        auto_c = self._make_auto(60, score=3)
+
+        scheduled = schedule_tasks_into_timeline([], [manual_a, manual_b, auto_c], FUTURE_DATE)
+
+        assert len(scheduled) == 3
+
+        a_result = next(pt for pt in scheduled if pt.task is manual_a.task)
+        b_result = next(pt for pt in scheduled if pt.task is manual_b.task)
+        assert a_result.scheduled_time == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 10, 0)
+        assert b_result.scheduled_time == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 13, 0)
+
+    def test_manual_task_overlapping_fixed_task_both_placed(self):
+        fixed_task = MagicMock(spec=Task)
+        fixed_task.estimated_duration = 60
+        fixed_task.prep_duration = 0
+        fixed = PrioritisedTask(
+            task=fixed_task,
+            priority_score=9,
+            calculated_urgency=3,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=True,
+            scheduled_time=datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 10, 0),
+        )
+        manual = self._make_manual(10, minute=30, score=6)
+
+        scheduled = schedule_tasks_into_timeline([fixed], [manual], FUTURE_DATE)
+
+        assert len(scheduled) == 2
+        fixed_result = next(pt for pt in scheduled if pt.is_fixed)
+        manual_result = next(pt for pt in scheduled if not pt.is_fixed)
+        assert fixed_result.scheduled_time == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 10, 0)
+        assert manual_result.scheduled_time == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 10, 30)
+
+
+class TestTaskExactlyFillingGap:
+    def _make_fixed_pt(self, start_hour: int, duration: int) -> PrioritisedTask:
+        task = MagicMock(spec=Task)
+        task.estimated_duration = duration
+        task.prep_duration = 0
+        return PrioritisedTask(
+            task=task,
+            priority_score=9,
+            calculated_urgency=3,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=True,
+            scheduled_time=datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, start_hour, 0),
+        )
+
+    def test_exact_fit_leaves_no_remaining_gap(self):
+        # Fixed at 9:00 (60 min) and 12:00 (360 min) → single gap 10:00-12:00 = 120 min
+        fixed = [self._make_fixed_pt(9, 60), self._make_fixed_pt(12, 360)]
+        flex_task = MagicMock(spec=Task)
+        flex_task.estimated_duration = 120
+        flex_task.prep_duration = 0
+        flex_task.allow_afternoon = False
+        flex_task.manual_scheduled_time = None
+        flex = PrioritisedTask(
+            task=flex_task,
+            priority_score=6,
+            calculated_urgency=2,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=False,
+        )
+
+        scheduled = schedule_tasks_into_timeline(fixed, [flex], FUTURE_DATE)
+
+        assert len(scheduled) == 3
+        flex_result = next(pt for pt in scheduled if not pt.is_fixed)
+        assert flex_result.scheduled_time == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 10, 0)
+
+
+class TestMultipleGapsSomeTooSmall:
+    def _make_fixed_pt(self, start_hour: int, start_minute: int, duration: int) -> PrioritisedTask:
+        task = MagicMock(spec=Task)
+        task.estimated_duration = duration
+        task.prep_duration = 0
+        return PrioritisedTask(
+            task=task,
+            priority_score=9,
+            calculated_urgency=3,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=True,
+            scheduled_time=datetime(
+                FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, start_hour, start_minute
+            ),
+        )
+
+    def test_skips_small_gaps_uses_first_fitting(self):
+        # Fixed tasks at 9:30 (30 min), 10:30 (30 min), 12:00 (60 min)
+        # Gaps: [9:00-9:30, 10:00-10:30, 11:00-12:00, 13:00-18:00]
+        fixed = [
+            self._make_fixed_pt(9, 30, 30),
+            self._make_fixed_pt(10, 30, 30),
+            self._make_fixed_pt(12, 0, 60),
+        ]
+        flex_task = MagicMock(spec=Task)
+        flex_task.estimated_duration = 60
+        flex_task.prep_duration = 0
+        flex_task.allow_afternoon = False
+        flex_task.manual_scheduled_time = None
+        flex = PrioritisedTask(
+            task=flex_task,
+            priority_score=6,
+            calculated_urgency=2,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=False,
+        )
+
+        scheduled = schedule_tasks_into_timeline(fixed, [flex], FUTURE_DATE)
+
+        flex_result = next(pt for pt in scheduled if not pt.is_fixed)
+        assert flex_result.scheduled_time == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 11, 0)
+
+
+class TestPrepDurationInFlexibleScheduling:
+    def test_flexible_task_with_prep_duration_consumes_extra_time(self):
+        # Flex A: 30 min duration + 30 min prep = 60 min total, higher priority
+        task_a = MagicMock(spec=Task)
+        task_a.estimated_duration = 30
+        task_a.prep_duration = 30
+        task_a.allow_afternoon = False
+        task_a.manual_scheduled_time = None
+        flex_a = PrioritisedTask(
+            task=task_a,
+            priority_score=9,
+            calculated_urgency=3,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=False,
+        )
+
+        # Flex B: 30 min duration, 0 prep, lower priority
+        task_b = MagicMock(spec=Task)
+        task_b.estimated_duration = 30
+        task_b.prep_duration = 0
+        task_b.allow_afternoon = False
+        task_b.manual_scheduled_time = None
+        flex_b = PrioritisedTask(
+            task=task_b,
+            priority_score=6,
+            calculated_urgency=2,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=False,
+        )
+
+        scheduled = schedule_tasks_into_timeline([], [flex_a, flex_b], FUTURE_DATE)
+
+        a_result = next(pt for pt in scheduled if pt.task is task_a)
+        b_result = next(pt for pt in scheduled if pt.task is task_b)
+        assert a_result.scheduled_time == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 9, 0)
+        # B starts at 10:00 (A consumed 60 min total), not 9:30
+        assert b_result.scheduled_time == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 10, 0)
+
+
+class TestAllowAfternoonInteraction:
+    def _make_fixed_covering_main_window(self) -> PrioritisedTask:
+        task = MagicMock(spec=Task)
+        task.estimated_duration = 360  # 9:00-15:00
+        task.prep_duration = 0
+        return PrioritisedTask(
+            task=task,
+            priority_score=9,
+            calculated_urgency=3,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=True,
+            scheduled_time=datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 9, 0),
+        )
+
+    def _make_flex(self, allow_afternoon: bool) -> PrioritisedTask:
+        task = MagicMock(spec=Task)
+        task.estimated_duration = 60
+        task.prep_duration = 0
+        task.allow_afternoon = allow_afternoon
+        task.manual_scheduled_time = None
+        return PrioritisedTask(
+            task=task,
+            priority_score=6,
+            calculated_urgency=2,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=False,
+        )
+
+    def test_afternoon_only_gaps_task_not_allowed(self):
+        fixed = [self._make_fixed_covering_main_window()]
+        flex = self._make_flex(allow_afternoon=False)
+        scheduled = schedule_tasks_into_timeline(fixed, [flex], FUTURE_DATE)
+
+        # Only the fixed task; flex not scheduled (no main-window gap)
+        assert len(scheduled) == 1
+        assert not any(pt.task is flex.task for pt in scheduled)
+
+    def test_afternoon_only_gaps_task_allowed(self):
+        fixed = [self._make_fixed_covering_main_window()]
+        flex = self._make_flex(allow_afternoon=True)
+        scheduled = schedule_tasks_into_timeline(fixed, [flex], FUTURE_DATE)
+
+        assert len(scheduled) == 2
+        flex_result = next(pt for pt in scheduled if pt.task is flex.task)
+        assert flex_result.scheduled_time == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 15, 0)
+
+
+class TestSchedulingHelpers:
+    def test_add_minutes_to_time_basic(self):
+        assert add_minutes_to_time(time(9, 0), 90) == time(10, 30)
+
+    def test_add_minutes_to_time_crosses_hour(self):
+        assert add_minutes_to_time(time(14, 45), 30) == time(15, 15)
+
+    def test_determine_window_main(self):
+        assert determine_window(datetime(2099, 1, 15, 10, 0)) == "main"
+
+    def test_determine_window_afternoon(self):
+        assert determine_window(datetime(2099, 1, 15, 16, 0)) == "afternoon"
+
+    def test_determine_window_evening(self):
+        assert determine_window(datetime(2099, 1, 15, 20, 0)) == "evening"
+
+    def test_determine_window_outside_returns_main(self):
+        assert determine_window(datetime(2099, 1, 15, 7, 0)) == "main"
+
+
+# ===========================================================================
+# Phase 3: DB-backed tests
+# ===========================================================================
+
+class TestSnoozeFilteringDB:
+    def test_snoozed_errand_hidden_today(self, db):
+        task = Task(
+            type="errand",
+            title="Snoozed",
+            estimated_duration=15,
+            importance=1,
+            urgency=1,
+            status="pending",
+            snooze_until=str(date.today() + timedelta(days=1)),
+        )
+        db.add(task)
+        db.commit()
+
+        result = get_flexible_tasks(db, date.today())
+        ids = [pt.task.id for pt in result]
+        assert task.id not in ids
+
+    def test_expired_snooze_appears_today(self, db):
+        task = Task(
+            type="errand",
+            title="Expired Snooze",
+            estimated_duration=15,
+            importance=1,
+            urgency=1,
+            status="pending",
+            snooze_until=str(date.today() - timedelta(days=1)),
+        )
+        db.add(task)
+        db.commit()
+
+        result = get_flexible_tasks(db, date.today())
+        ids = [pt.task.id for pt in result]
+        assert task.id in ids
+
+    def test_snooze_until_today_appears(self, db):
+        task = Task(
+            type="errand",
+            title="Snooze Today",
+            estimated_duration=15,
+            importance=1,
+            urgency=1,
+            status="pending",
+            snooze_until=str(date.today()),
+        )
+        db.add(task)
+        db.commit()
+
+        result = get_flexible_tasks(db, date.today())
+        ids = [pt.task.id for pt in result]
+        assert task.id in ids
+
+
+class TestGetRemainingCapacityDB:
+    """
+    Note: get_remaining_capacity assigns a gap to main if gap.start < afternoon_start (15:00).
+    With no fixed tasks, calculate_gaps returns a single gap 9:00-18:00 whose start is 9:00 < 15:00,
+    so all 540 minutes are assigned to main and afternoon == 0.
+    """
+
+    def test_no_fixed_tasks_full_capacity(self, db):
+        result = get_remaining_capacity(db, FUTURE_DATE)
+        assert result["main"] == 540
+        assert result["afternoon"] == 0
+        assert result["is_overbooked"] is False
+
+    def test_with_fixed_tasks_reduced_capacity(self, db):
+        task = Task(
+            type="appointment",
+            title="Meeting",
+            scheduled_at=datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 10, 0),
+            estimated_duration=60,
+            importance=2,
+            status="pending",
+        )
+        db.add(task)
+        db.commit()
+
+        result = get_remaining_capacity(db, FUTURE_DATE)
+        # Gaps: [9:00-10:00 (60 min), 11:00-18:00 (420 min)]; both start < 15:00 → main=480, afternoon=0
+        assert result["main"] == 480
+        assert result["afternoon"] == 0
+        assert result["is_overbooked"] is False
+
+    def test_is_overbooked_when_full(self, db):
+        appt1 = Task(
+            type="appointment",
+            title="Block Main",
+            scheduled_at=datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 9, 0),
+            estimated_duration=360,
+            importance=3,
+            status="pending",
+        )
+        appt2 = Task(
+            type="appointment",
+            title="Block Afternoon",
+            scheduled_at=datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 15, 0),
+            estimated_duration=180,
+            importance=3,
+            status="pending",
+        )
+        db.add_all([appt1, appt2])
+        db.commit()
+
+        result = get_remaining_capacity(db, FUTURE_DATE)
+        assert result["main"] == 0
+        assert result["afternoon"] == 0
+        assert result["is_overbooked"] is True

@@ -292,7 +292,7 @@ Be aware of these gaps when making changes:
 uv run pytest
 ```
 
-Tests live in `tests/test_prioritisation.py`. Uses pytest with an in-memory SQLite DB (check the test file for fixture setup).
+Tests live in `tests/` (4 files: `test_api.py`, `test_prioritisation.py`, `test_recurrence.py`, `test_workout_algorithm.py`). Uses pytest with an in-memory SQLite DB (`conftest.py` provides `db` and `client` fixtures).
 
 ---
 

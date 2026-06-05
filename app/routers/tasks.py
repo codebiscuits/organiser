@@ -304,22 +304,6 @@ async def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
     return task
 
 
-@router.put("/{task_id}", response_model=TaskResponse)
-async def update_task(task_id: str, task_data: TaskUpdate, db: Session = Depends(get_db)):
-    """Update an existing task."""
-    task = db.query(Task).filter(Task.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    update_data = task_data.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(task, field, value)
-
-    db.commit()
-    db.refresh(task)
-    return task
-
-
 @router.post("/{task_id}/complete", response_class=HTMLResponse)
 async def complete_task(
     request: Request,

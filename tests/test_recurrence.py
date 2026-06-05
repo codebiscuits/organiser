@@ -10,7 +10,7 @@ from datetime import date, timedelta
 
 from app.models.task import Task
 from app.models.recurrence import Recurrence, Projection
-from app.services.recurrence import generate_projections, refresh_projections
+from app.services.recurrence import generate_projections, refresh_projections, parse_day_list
 
 
 def make_recurrence(**kwargs) -> Recurrence:
@@ -141,6 +141,27 @@ class TestGenerateProjectionsWeekly:
         assert date(2026, 1, 19) in dates
         assert date(2026, 1, 26) not in dates  # week 3 — skipped
 
+    def test_biweekly_with_explicit_days_ignores_multiple(self):
+        # When day_of_week is set, interval_multiple is ignored — all matching weekdays appear.
+        # Jan 2026 Mondays (stored as 1): 5, 12, 19, 26. Wednesdays (stored as 3): 7, 14, 21, 28.
+        r = make_recurrence(
+            interval_type="weekly",
+            interval_multiple=2,
+            day_of_week="1,3",
+            start_date=date(2026, 1, 5),
+        )
+        projections = generate_projections(None, r, date(2026, 1, 5), date(2026, 1, 31))
+        dates = {p.due_date for p in projections}
+        assert len(projections) == 8
+        assert date(2026, 1, 5) in dates   # Mon
+        assert date(2026, 1, 7) in dates   # Wed
+        assert date(2026, 1, 12) in dates  # Mon
+        assert date(2026, 1, 14) in dates  # Wed
+        assert date(2026, 1, 19) in dates  # Mon
+        assert date(2026, 1, 21) in dates  # Wed
+        assert date(2026, 1, 26) in dates  # Mon
+        assert date(2026, 1, 28) in dates  # Wed
+
 
 # ---------------------------------------------------------------------------
 # Monthly recurrence
@@ -267,3 +288,59 @@ class TestRefreshProjections:
         count_second = db.query(Projection).filter(Projection.task_id == task.id).count()
 
         assert count_first == count_second
+
+
+# ---------------------------------------------------------------------------
+# Monthly edge cases
+# ---------------------------------------------------------------------------
+
+class TestGenerateProjectionsMonthlyEdgeCases:
+    def test_monthly_day_31_skips_short_months(self):
+        # Jan–Jun 2026: only Jan, Mar, May have 31 days
+        r = make_recurrence(interval_type="monthly", day_of_month="31")
+        projections = generate_projections(None, r, date(2026, 1, 1), date(2026, 6, 30))
+        dates = {p.due_date for p in projections}
+        assert len(projections) == 3
+        assert date(2026, 1, 31) in dates
+        assert date(2026, 3, 31) in dates
+        assert date(2026, 5, 31) in dates
+
+    def test_monthly_day_29_feb_leap_year(self):
+        # 2028 is a leap year — Feb 29 exists
+        r = make_recurrence(interval_type="monthly", day_of_month="29")
+        projections = generate_projections(None, r, date(2028, 1, 1), date(2028, 3, 31))
+        dates = {p.due_date for p in projections}
+        assert len(projections) == 3
+        assert date(2028, 1, 29) in dates
+        assert date(2028, 2, 29) in dates
+        assert date(2028, 3, 29) in dates
+
+    def test_monthly_day_29_feb_non_leap_year(self):
+        # 2027 is not a leap year — Feb 29 skipped
+        r = make_recurrence(interval_type="monthly", day_of_month="29")
+        projections = generate_projections(None, r, date(2027, 1, 1), date(2027, 3, 31))
+        dates = {p.due_date for p in projections}
+        assert len(projections) == 2
+        assert date(2027, 1, 29) in dates
+        assert date(2027, 3, 29) in dates
+
+
+# ---------------------------------------------------------------------------
+# parse_day_list
+# ---------------------------------------------------------------------------
+
+class TestParseDayList:
+    def test_empty_string_returns_empty_list(self):
+        assert parse_day_list("") == []
+
+    def test_none_returns_empty_list(self):
+        assert parse_day_list(None) == []
+
+    def test_single_value(self):
+        assert parse_day_list("3") == [3]
+
+    def test_multiple_values(self):
+        assert parse_day_list("1,3,5") == [1, 3, 5]
+
+    def test_whitespace_handled(self):
+        assert parse_day_list("1, 3, 5") == [1, 3, 5]

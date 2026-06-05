@@ -6,16 +6,33 @@ Tests verify DB state after mutations rather than HTML content, since most
 endpoints return HTMX fragments.
 """
 import pytest
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, time
 
 from app.models.task import Task, CompletedTask
 from app.models.recurrence import Projection, Recurrence
 from app.models.workout import Exercise, ExerciseMuscle, MuscleGroup, PerformedSet
+from app.models.preset import TaskPreset
+from app.services.scheduling import build_daily_schedule
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+FUTURE_DATE = date(2099, 1, 15)
+
+PRESET_PAYLOAD = {
+    "name": "Weekly Standup",
+    "type": "recurring",
+    "title": "Team Standup",
+    "estimated_duration": 15,
+    "importance": 2,
+    "urgency": 2,
+    "allow_afternoon": False,
+    "interval_type": "weekly",
+    "interval_multiple": 1,
+    "day_of_week": "1,3,5",
+}
 
 ERRAND_PAYLOAD = {
     "type": "errand",
@@ -551,3 +568,613 @@ class TestDeleteProjection:
             params={"date": "2099-12-31"},
         )
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Defer sets snooze
+# ---------------------------------------------------------------------------
+
+class TestDeferSetsSnooze:
+    def test_defer_errand_sets_snooze_until_tomorrow(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+
+        resp = client.post(f"/tasks/{task_id}/defer")
+        assert resp.status_code == 200
+
+        task = db.query(Task).filter(Task.id == task_id).first()
+        db.refresh(task)
+        assert task.snooze_until == str(date.today() + timedelta(days=1))
+        assert task.deferred_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Variable recurring with allowed days
+# ---------------------------------------------------------------------------
+
+class TestVariableRecurringAllowedDays:
+    def _make_variable_recurring_with_allowed_days(self, client, db, allowed_days=None):
+        payload = {
+            "type": "variable_recurring",
+            "title": "Dentist",
+            "importance": 2,
+            "urgency": 2,
+            "estimated_duration": 60,
+            "recurrence": {
+                "interval_type": "monthly",
+                "interval_multiple": 1,
+                "start_date": "2026-01-01T00:00:00",
+            },
+        }
+        if allowed_days is not None:
+            payload["allowed_days"] = allowed_days
+        return create_task(client, payload)
+
+    def test_allowed_days_shifts_to_next_allowed(self, client, db):
+        # allowed_days="0" means Sunday (stored as 0, python weekday 6)
+        data = self._make_variable_recurring_with_allowed_days(client, db, allowed_days="0")
+        task_id = data["id"]
+        add_todays_projection(db, task_id)
+
+        resp = client.post(
+            f"/tasks/{task_id}/complete/variable",
+            data={"days_until_next": 1},
+        )
+        assert resp.status_code == 200
+
+        proj = db.query(Projection).filter(
+            Projection.task_id == task_id,
+            Projection.due_date > date.today(),
+        ).order_by(Projection.due_date).first()
+        assert proj is not None
+        assert proj.due_date.weekday() == 6  # Sunday in Python
+
+    def test_without_allowed_days_exact_days(self, client, db):
+        data = self._make_variable_recurring_with_allowed_days(client, db)
+        task_id = data["id"]
+        add_todays_projection(db, task_id)
+
+        resp = client.post(
+            f"/tasks/{task_id}/complete/variable",
+            data={"days_until_next": 5},
+        )
+        assert resp.status_code == 200
+
+        expected_date = date.today() + timedelta(days=5)
+        proj = db.query(Projection).filter(
+            Projection.task_id == task_id,
+            Projection.due_date == expected_date,
+        ).first()
+        assert proj is not None
+
+
+# ---------------------------------------------------------------------------
+# Preset CRUD
+# ---------------------------------------------------------------------------
+
+class TestPresetCRUD:
+    def test_create_preset(self, client, db):
+        resp = client.post("/presets/", json=PRESET_PAYLOAD)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "Weekly Standup"
+        assert data["title"] == "Team Standup"
+
+        preset = db.query(TaskPreset).filter(TaskPreset.name == "Weekly Standup").first()
+        assert preset is not None
+
+    def test_get_preset_by_id(self, client, db):
+        created = client.post("/presets/", json=PRESET_PAYLOAD).json()
+        preset_id = created["id"]
+
+        resp = client.get(f"/presets/{preset_id}")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Weekly Standup"
+
+    def test_delete_preset(self, client, db):
+        created = client.post("/presets/", json=PRESET_PAYLOAD).json()
+        preset_id = created["id"]
+
+        resp = client.delete(f"/presets/{preset_id}")
+        assert resp.status_code == 200
+
+        assert db.query(TaskPreset).filter(TaskPreset.id == preset_id).first() is None
+
+    def test_get_nonexistent_preset_returns_404(self, client, db):
+        resp = client.get("/presets/999")
+        assert resp.status_code == 404
+
+    def test_list_presets_ordered_by_name(self, client, db):
+        client.post("/presets/", json={**PRESET_PAYLOAD, "name": "Zebra"})
+        client.post("/presets/", json={**PRESET_PAYLOAD, "name": "Alpha"})
+
+        resp = client.get("/presets/")
+        assert resp.status_code == 200
+        names = [p["name"] for p in resp.json()]
+        assert names.index("Alpha") < names.index("Zebra")
+
+
+# ---------------------------------------------------------------------------
+# Task updates
+# ---------------------------------------------------------------------------
+
+class TestUpdateTask:
+    def test_update_errand_fields(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+
+        resp = client.put(f"/tasks/{task_id}", json={"title": "Buy bread", "importance": 3})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["title"] == "Buy bread"
+        assert body["importance"] == 3
+        assert body["urgency"] == ERRAND_PAYLOAD["urgency"]  # unchanged
+
+    def test_update_recurring_task_recurrence(self, client, db):
+        data = create_task(client, RECURRING_PAYLOAD)
+        task_id = data["id"]
+
+        resp = client.put(
+            f"/tasks/{task_id}",
+            json={"recurrence": {"interval_type": "weekly", "interval_multiple": 1, "start_date": "2026-01-01T00:00:00"}},
+        )
+        assert resp.status_code == 200
+
+        recurrence = db.query(Recurrence).filter(Recurrence.task_id == task_id).first()
+        db.refresh(recurrence)
+        assert recurrence.interval_type == "weekly"
+
+    def test_update_nonexistent_task_returns_404(self, client, db):
+        resp = client.put("/tasks/does-not-exist", json={"title": "x"})
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Admin: refresh projections
+# ---------------------------------------------------------------------------
+
+class TestAdminRefreshProjections:
+    def test_refresh_projections_creates_projections(self, client, db):
+        task = Task(type="recurring", title="Daily Task", importance=2, status="pending")
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        recurrence = Recurrence(
+            task_id=task.id,
+            interval_type="daily",
+            interval_multiple=1,
+            start_date=date.today(),
+        )
+        db.add(recurrence)
+        db.commit()
+
+        resp = client.post("/admin/refresh-projections")
+        assert resp.status_code == 200
+        assert resp.json()["projections_created"] > 0
+
+        projections = db.query(Projection).filter(Projection.task_id == task.id).all()
+        assert len(projections) > 0
+
+
+# ---------------------------------------------------------------------------
+# Admin: task CRUD
+# ---------------------------------------------------------------------------
+
+class TestAdminTaskCRUD:
+    def test_admin_create_recurring_task(self, client, db):
+        resp = client.post(
+            "/admin/tasks",
+            data={
+                "title": "Daily Walk",
+                "type": "recurring",
+                "importance": "2",
+                "estimated_duration": "30",
+                "interval_type": "daily",
+                "start_date": "2026-01-01",
+                "interval_multiple": "1",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        task = db.query(Task).filter(Task.title == "Daily Walk").first()
+        assert task is not None
+
+        recurrence = db.query(Recurrence).filter(Recurrence.task_id == task.id).first()
+        assert recurrence is not None
+        assert recurrence.interval_type == "daily"
+
+        projections = db.query(Projection).filter(Projection.task_id == task.id).all()
+        assert len(projections) > 0
+
+    def test_admin_update_task(self, client, db):
+        task = Task(
+            type="errand",
+            title="Old Title",
+            importance=2,
+            urgency=1,
+            estimated_duration=15,
+            status="pending",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        resp = client.post(
+            f"/admin/tasks/{task.id}",
+            data={"title": "New Title", "type": "errand", "importance": "3"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        db.refresh(task)
+        assert task.title == "New Title"
+        assert task.importance == 3
+
+    def test_admin_delete_task(self, client, db):
+        data = create_task(client, RECURRING_PAYLOAD)
+        task_id = data["id"]
+
+        resp = client.delete(f"/admin/tasks/{task_id}")
+        assert resp.status_code == 200
+
+        assert db.query(Task).filter(Task.id == task_id).first() is None
+        assert db.query(Recurrence).filter(Recurrence.task_id == task_id).count() == 0
+        assert db.query(Projection).filter(Projection.task_id == task_id).count() == 0
+
+    def test_completed_tasks_history(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+        client.post(f"/tasks/{task_id}/complete")
+
+        today_str = date.today().isoformat()
+        resp = client.get(f"/admin/completed-tasks?from_date={today_str}&to_date={today_str}")
+        assert resp.status_code == 200
+
+        completed = db.query(CompletedTask).filter(CompletedTask.task_id == task_id).first()
+        assert completed is not None
+
+
+# ---------------------------------------------------------------------------
+# Task lifecycle edge cases
+# ---------------------------------------------------------------------------
+
+class TestTaskLifecycleEdgeCases:
+    def test_complete_already_deleted_task_returns_404(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+
+        client.post(f"/tasks/{task_id}/complete")
+        resp = client.post(f"/tasks/{task_id}/complete")
+        assert resp.status_code == 404
+
+    def test_defer_recurring_no_today_projection(self, client, db):
+        task = Task(
+            type="recurring",
+            title="Walk",
+            importance=2,
+            urgency=1,
+            estimated_duration=30,
+            status="pending",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        resp = client.post(f"/tasks/{task.id}/defer")
+        assert resp.status_code == 200
+
+        db.refresh(task)
+        assert task.deferred_count == 1
+        assert task.snooze_until is not None
+
+    def test_create_appointment_without_scheduled_at(self, client, db):
+        resp = client.post("/tasks/", json={"type": "appointment", "title": "No time", "importance": 2})
+        assert resp.status_code == 200
+        assert resp.json()["type"] == "appointment"
+
+    def test_create_deadline_without_deadline_at(self, client, db):
+        resp = client.post("/tasks/", json={"type": "deadline", "title": "No deadline", "importance": 2})
+        assert resp.status_code == 200
+        assert resp.json()["type"] == "deadline"
+
+
+# ---------------------------------------------------------------------------
+# Admin: muscle groups
+# ---------------------------------------------------------------------------
+
+class TestAdminMuscleGroups:
+    def test_create_muscle_group(self, client, db):
+        resp = client.post(
+            "/admin/muscle-groups",
+            data={"name": "Biceps", "recovery_time": 2},
+        )
+        assert resp.status_code == 200
+
+        mg = db.query(MuscleGroup).filter(MuscleGroup.name == "Biceps").first()
+        assert mg is not None
+        assert mg.recovery_time == 2
+
+    def test_update_muscle_group_recovery_time(self, client, db):
+        mg = MuscleGroup(name="Quads", recovery_time=2)
+        db.add(mg)
+        db.commit()
+        db.refresh(mg)
+
+        resp = client.put(
+            f"/admin/muscle-groups/{mg.id}",
+            data={"recovery_time": 3},
+        )
+        assert resp.status_code == 200
+
+        db.refresh(mg)
+        assert mg.recovery_time == 3
+
+    def test_delete_muscle_group_cascades(self, client, db):
+        mg = MuscleGroup(name="Chest", recovery_time=2)
+        db.add(mg)
+        db.commit()
+        db.refresh(mg)
+
+        ex = Exercise(name="Press", intensity="heavy")
+        db.add(ex)
+        db.commit()
+        db.refresh(ex)
+
+        db.add(ExerciseMuscle(exercise_id=ex.id, muscle_id=mg.id))
+        db.commit()
+
+        resp = client.delete(f"/admin/muscle-groups/{mg.id}")
+        assert resp.status_code == 200
+
+        assert db.query(MuscleGroup).filter(MuscleGroup.id == mg.id).first() is None
+        assert db.query(ExerciseMuscle).filter(ExerciseMuscle.muscle_id == mg.id).count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Admin: exercises
+# ---------------------------------------------------------------------------
+
+class TestAdminExercises:
+    def test_create_exercise_with_muscles(self, client, db):
+        mg1 = MuscleGroup(name="Chest", recovery_time=2)
+        mg2 = MuscleGroup(name="Triceps", recovery_time=2)
+        db.add_all([mg1, mg2])
+        db.commit()
+        db.refresh(mg1)
+        db.refresh(mg2)
+
+        resp = client.post(
+            "/admin/exercises",
+            data={"name": "Bench Press", "intensity": "heavy", "muscle_ids": [mg1.id, mg2.id]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        ex = db.query(Exercise).filter(Exercise.name == "Bench Press").first()
+        assert ex is not None
+        assert db.query(ExerciseMuscle).filter(ExerciseMuscle.exercise_id == ex.id).count() == 2
+
+    def test_update_exercise_changes_muscles(self, client, db):
+        mg1 = MuscleGroup(name="Chest", recovery_time=2)
+        mg2 = MuscleGroup(name="Shoulders", recovery_time=2)
+        db.add_all([mg1, mg2])
+        db.commit()
+        db.refresh(mg1)
+        db.refresh(mg2)
+
+        ex = Exercise(name="Press", intensity="heavy")
+        db.add(ex)
+        db.commit()
+        db.refresh(ex)
+
+        db.add(ExerciseMuscle(exercise_id=ex.id, muscle_id=mg1.id))
+        db.commit()
+
+        resp = client.post(
+            f"/admin/exercises/{ex.id}",
+            data={"name": "Press", "intensity": "heavy", "muscle_ids": [mg2.id]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        ems = db.query(ExerciseMuscle).filter(ExerciseMuscle.exercise_id == ex.id).all()
+        assert len(ems) == 1
+        assert ems[0].muscle_id == mg2.id
+
+    def test_delete_exercise_cascades(self, client, db):
+        mg = MuscleGroup(name="Back", recovery_time=2)
+        db.add(mg)
+        db.commit()
+        db.refresh(mg)
+
+        ex = Exercise(name="Pull-up", intensity="heavy")
+        db.add(ex)
+        db.commit()
+        db.refresh(ex)
+
+        db.add(ExerciseMuscle(exercise_id=ex.id, muscle_id=mg.id))
+        db.commit()
+
+        resp = client.delete(f"/admin/exercises/{ex.id}")
+        assert resp.status_code == 200
+
+        assert db.query(Exercise).filter(Exercise.id == ex.id).first() is None
+        assert db.query(ExerciseMuscle).filter(ExerciseMuscle.exercise_id == ex.id).count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Admin: workout history
+# ---------------------------------------------------------------------------
+
+class TestAdminWorkoutHistory:
+    def test_add_workout_history(self, client, db):
+        ex = Exercise(name="Squat", intensity="heavy")
+        db.add(ex)
+        db.commit()
+        db.refresh(ex)
+
+        resp = client.post(
+            "/admin/workout-history/add",
+            data={
+                "exercise_id": ex.id,
+                "performed_date": "2026-01-01",
+                "reps": 10,
+                "weight_kg": 60.0,
+                "num_sets": 3,
+                "intensity": "heavy",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        performed = db.query(PerformedSet).filter(PerformedSet.exercise_id == ex.id).first()
+        assert performed is not None
+        assert performed.reps == 10
+
+    def test_delete_workout_history(self, client, db):
+        ex = Exercise(name="Deadlift", intensity="heavy")
+        db.add(ex)
+        db.commit()
+        db.refresh(ex)
+
+        ps = PerformedSet(exercise_id=ex.id, reps=5, weight_kg=100.0, num_sets=3, intensity="heavy")
+        db.add(ps)
+        db.commit()
+        db.refresh(ps)
+
+        resp = client.delete(f"/admin/workout-history/{ps.id}")
+        assert resp.status_code == 200
+
+        assert db.query(PerformedSet).filter(PerformedSet.id == ps.id).first() is None
+
+    def test_edit_workout_history(self, client, db):
+        ex = Exercise(name="Row", intensity="light")
+        db.add(ex)
+        db.commit()
+        db.refresh(ex)
+
+        ps = PerformedSet(exercise_id=ex.id, reps=8, weight_kg=50.0, num_sets=3, intensity="heavy")
+        db.add(ps)
+        db.commit()
+        db.refresh(ps)
+
+        resp = client.post(
+            f"/admin/workout-history/{ps.id}",
+            data={
+                "exercise_id": ex.id,
+                "num_sets": 4,
+                "reps": 12,
+                "weight_kg": 70.0,
+                "intensity": "light",
+            },
+        )
+        assert resp.status_code == 200
+
+        db.refresh(ps)
+        assert ps.reps == 12
+        assert ps.weight_kg == 70.0
+        assert ps.num_sets == 4
+        assert ps.intensity == "light"
+
+
+# ---------------------------------------------------------------------------
+# Scenario-level tests
+# ---------------------------------------------------------------------------
+
+class TestFullDaySchedulingScenario:
+    def test_full_day_mix_of_task_types(self, client, db):
+        appt1 = Task(
+            type="appointment", title="Morning Meeting",
+            scheduled_at=datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 10, 0),
+            estimated_duration=60, importance=3, allow_afternoon=False, status="pending",
+        )
+        appt2 = Task(
+            type="appointment", title="Afternoon Call",
+            scheduled_at=datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 14, 0),
+            estimated_duration=60, importance=2, allow_afternoon=False, status="pending",
+        )
+        recurring = Task(
+            type="recurring", title="Standup",
+            scheduled_time=time(9, 30),
+            estimated_duration=15, importance=2, urgency=2,
+            allow_afternoon=False, status="pending",
+        )
+        errand1 = Task(
+            type="errand", title="E1",
+            estimated_duration=30, importance=2, urgency=2,
+            allow_afternoon=False, status="pending",
+        )
+        errand2 = Task(
+            type="errand", title="E2",
+            estimated_duration=30, importance=1, urgency=1,
+            allow_afternoon=False, status="pending",
+        )
+        deadline = Task(
+            type="deadline", title="Report",
+            deadline_at=datetime(2099, 6, 1, 17, 0),
+            estimated_duration=60, importance=3,
+            allow_afternoon=False, status="pending",
+        )
+
+        db.add_all([appt1, appt2, recurring, errand1, errand2, deadline])
+        db.commit()
+        db.refresh(recurring)
+
+        rec_rule = Recurrence(
+            task_id=recurring.id,
+            interval_type="daily",
+            interval_multiple=1,
+            start_date=FUTURE_DATE,
+        )
+        db.add(rec_rule)
+        db.add(Projection(task_id=recurring.id, due_date=FUTURE_DATE))
+        db.commit()
+
+        schedule = build_daily_schedule(db, FUTURE_DATE)
+
+        assert len(schedule) >= 5
+
+        meeting = next((s for s in schedule if s.task.title == "Morning Meeting"), None)
+        assert meeting is not None
+        assert meeting.start_time == time(10, 0)
+
+        call = next((s for s in schedule if s.task.title == "Afternoon Call"), None)
+        assert call is not None
+        assert call.start_time == time(14, 0)
+
+        # No two tasks should have overlapping time slots
+        for i, a in enumerate(schedule):
+            for b in schedule[i + 1:]:
+                overlap = a.start_time < b.end_time and b.start_time < a.end_time
+                assert not overlap, f"{a.task.title} ({a.start_time}-{a.end_time}) overlaps {b.task.title} ({b.start_time}-{b.end_time})"
+
+    def test_week_view_returns_tasks_in_range(self, client, db):
+        task = Task(
+            type="recurring", title="Weekly Review",
+            importance=2, urgency=1, estimated_duration=30,
+            allow_afternoon=False, status="pending",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        db.add(Projection(task_id=task.id, due_date=date(2099, 1, 12)))
+
+        appt = Task(
+            type="appointment", title="Budget Meeting",
+            scheduled_at=datetime(2099, 1, 14, 10, 0),
+            estimated_duration=60, importance=3, status="pending",
+        )
+        db.add(appt)
+        db.commit()
+
+        resp = client.get("/tasks/week?start=2099-01-10&end=2099-01-16")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) >= 2
+
+        titles = [t["title"] for t in data]
+        assert "Weekly Review" in titles
+        assert "Budget Meeting" in titles

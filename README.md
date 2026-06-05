@@ -457,7 +457,7 @@ The following are stubbed or partially implemented:
 uv run pytest
 ```
 
-Tests cover the prioritisation service, recurrence logic, workout algorithm, and API routes (119 tests).
+Tests cover the prioritisation service, recurrence logic, workout algorithm, and API routes (181 tests).
 
 ---
 
