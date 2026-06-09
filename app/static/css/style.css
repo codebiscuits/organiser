@@ -1,14 +1,70 @@
 :root {
-    --bg-primary: #1a1a2e;
-    --bg-secondary: #16213e;
-    --bg-card: #0f3460;
-    --text-primary: #eaeaea;
-    --text-secondary: #a0a0a0;
-    --accent: #e94560;
-    --success: #4ecca3;
-    --warning: #ffc107;
-    --danger: #e94560;
+    /* Chromatic minimalism — light: stark whites, ink-black text, single mint accent */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f8f9fa;
+    --bg-card: #eef1f3;
+    --text-primary: #111111;
+    --text-secondary: #555555;
+    --text-on-accent: #0f3d26;
+    --accent: #2ee59d;
+    --accent-deep: #047857;
+    --success: #2ee59d;
+    --warning: #c9952c;
+    --danger: #e5484d;
+    --error: #e5484d;
+    --border: #eaeaea;
 }
+
+/* Dark theme — greyscale inverted, same mint accent */
+[data-theme="dark"] {
+    --bg-primary: #111214;
+    --bg-secondary: #1a1d1f;
+    --bg-card: #252a2d;
+    --text-primary: #eeeeee;
+    --text-secondary: #aaaaaa;
+    --text-on-accent: #0f3d26;
+    --accent: #2ee59d;
+    --accent-deep: #34d399;
+    --success: #2ee59d;
+    --warning: #e8a83e;
+    --danger: #f0524f;
+    --error: #f0524f;
+    --border: #2e3336;
+}
+
+/* Dark mode: tone down the mint glow on the current-task card */
+[data-theme="dark"] .task-card-focus {
+    box-shadow: 0 4px 16px rgba(46, 229, 157, 0.05);
+}
+
+/* Theme toggle button */
+.theme-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 1rem;
+    width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s, border-color 0.2s;
+    margin-left: 1rem;
+    flex-shrink: 0;
+}
+
+.theme-toggle:hover {
+    color: var(--accent-deep);
+    border-color: var(--accent-deep);
+}
+
+/* Show moon in light mode, sun in dark mode */
+.theme-toggle .icon-sun { display: none; }
+.theme-toggle .icon-moon { display: inline; }
+[data-theme="dark"] .theme-toggle .icon-sun { display: block; }
+[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
 
 * {
     box-sizing: border-box;
@@ -45,7 +101,7 @@ nav a {
 }
 
 nav a:hover {
-    color: var(--accent);
+    color: var(--accent-deep);
 }
 
 main {
@@ -77,7 +133,7 @@ main {
     padding: 2.5rem 2rem;
     text-align: center;
     border: 2px solid var(--accent);
-    box-shadow: 0 8px 32px rgba(233, 69, 96, 0.2);
+    box-shadow: 0 8px 32px rgba(46, 229, 157, 0.15);
 }
 
 .focus-title {
@@ -133,7 +189,7 @@ main {
 
 .btn-complete-focus {
     background: var(--success);
-    color: var(--bg-primary);
+    color: var(--text-on-accent);
     padding: 0.875rem 2rem;
     border: none;
     border-radius: 8px;
@@ -265,7 +321,7 @@ main {
 
 .btn-mini.btn-done {
     background: var(--success);
-    color: var(--bg-primary);
+    color: var(--text-on-accent);
 }
 
 .btn-mini.btn-defer {
@@ -281,8 +337,8 @@ main {
 
 .btn-mini.btn-edit {
     background: transparent;
-    border: 1px solid var(--accent);
-    color: var(--accent);
+    border: 1px solid var(--accent-deep);
+    color: var(--accent-deep);
 }
 
 .btn-mini.btn-delete {
@@ -314,11 +370,11 @@ main {
     height: 60px;
     border-radius: 50%;
     background: var(--accent);
-    color: white;
+    color: var(--text-on-accent);
     border: none;
     font-size: 2rem;
     cursor: pointer;
-    box-shadow: 0 4px 12px rgba(233, 69, 96, 0.4);
+    box-shadow: 0 4px 12px rgba(46, 229, 157, 0.35);
     transition: transform 0.2s;
 }
 
@@ -397,7 +453,7 @@ main {
 .modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.7);
+    background: rgba(17, 17, 17, 0.45);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -557,7 +613,7 @@ main {
     border: none;
     border-radius: 6px;
     background: var(--accent);
-    color: white;
+    color: var(--text-on-accent);
     cursor: pointer;
     font-size: 0.875rem;
     font-weight: 500;
@@ -627,7 +683,7 @@ main {
     border: none;
     border-radius: 6px;
     background: var(--accent);
-    color: white;
+    color: var(--text-on-accent);
     cursor: pointer;
 }
 
@@ -646,7 +702,7 @@ main {
 }
 
 .pagination a {
-    color: var(--accent);
+    color: var(--accent-deep);
     text-decoration: none;
 }
 
@@ -796,7 +852,7 @@ main {
 }
 
 .timeline-task-card:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 4px 12px rgba(17, 17, 17, 0.08);
     transform: translateX(2px);
 }
 
@@ -809,7 +865,7 @@ main {
 .timeline-task-card.dragging {
     opacity: 0.5;
     cursor: grabbing;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 8px 24px rgba(17, 17, 17, 0.12);
     z-index: 100;
 }
 
@@ -867,13 +923,13 @@ main {
     background: var(--bg-secondary);
     padding: 1rem 1.5rem;
     border-radius: 12px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 8px 32px rgba(17, 17, 17, 0.10);
     z-index: 100;
 }
 
 .btn-save-timeline {
     background: var(--success);
-    color: var(--bg-primary);
+    color: var(--text-on-accent);
     padding: 0.75rem 1.5rem;
     border: none;
     border-radius: 8px;
@@ -915,8 +971,8 @@ main {
         to bottom,
         transparent,
         transparent 59px,
-        rgba(255, 255, 255, 0.05) 59px,
-        rgba(255, 255, 255, 0.05) 60px
+        rgba(17, 17, 17, 0.04) 59px,
+        rgba(17, 17, 17, 0.04) 60px
     );
     pointer-events: none;
     z-index: 0;
@@ -1017,7 +1073,7 @@ main {
     align-items: flex-start;
     justify-content: flex-end;
     padding: 0.25rem 0.5rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid rgba(17, 17, 17, 0.05);
 }
 
 .week-time-label {
@@ -1031,13 +1087,13 @@ main {
 
 .week-hour-slot {
     height: 60px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid rgba(17, 17, 17, 0.05);
     cursor: pointer;
     transition: background 0.1s;
 }
 
 .week-hour-slot:hover {
-    background: rgba(233, 69, 96, 0.1);
+    background: rgba(46, 229, 157, 0.12);
 }
 
 .week-task-card {
@@ -1055,7 +1111,7 @@ main {
 }
 
 .week-task-card:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 4px 12px rgba(17, 17, 17, 0.08);
     transform: scale(1.02);
     z-index: 10;
 }
@@ -1082,7 +1138,7 @@ main {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
+    background: rgba(17, 17, 17, 0.45);
     display: flex;
     justify-content: center;
     align-items: center;
@@ -1143,7 +1199,7 @@ main {
 
 .btn-save {
     background: var(--success);
-    color: var(--bg-primary);
+    color: var(--text-on-accent);
     padding: 0.6rem 1.25rem;
     border: none;
     border-radius: 6px;
@@ -1268,7 +1324,7 @@ main {
 /* Next date preview in VRT completion */
 .next-date-preview {
     font-weight: 500;
-    color: var(--accent);
+    color: var(--accent-deep);
 }
 
 .allowed-days-badges {

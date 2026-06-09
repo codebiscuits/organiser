@@ -1,0 +1,199 @@
+/**
+ * chromatic-minimalism.css
+ * A clean, modern, ultra-minimalist theme based on the principles of Chromatic Minimalism.
+ * Focuses on typography, generous whitespace, and a single Mint Green accent color.
+ * 
+ * Palette:
+ * - Primary Backgrounds: Stark Whites and Crisp Light Greys
+ * - Typography: High-contrast Ink Black and Muted Charcoal
+ * - Structural Elements: Subtly rounded corners, hairline borders, and zero heavy shadows.
+ * - Accent: Vibrant, intentional Mint Green reserved strictly for active states, primary buttons, and key focus items.
+ */
+
+:root {
+  /* --- Color Palette --- */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8f9fa;
+  --bg-tertiary: #f1f3f5;
+  
+  --text-primary: #111111;   /* Stark Ink Black for maximum readability */
+  --text-secondary: #555555; /* Charcoal for secondary info and labels */
+  --text-muted: #888888;     /* Muted grey for placeholders or disabled text */
+  --text-on-accent: #0f3d26; /* Deep dark green for high contrast text on mint backgrounds */
+
+  /* The Single Accent: Mint Green */
+  --accent-mint: #2ee59d;
+  --accent-mint-hover: #23c987;
+  --accent-mint-subtle: #e6fcf5; /* Ultra-light tint for subtle highlights/badges */
+
+  /* --- Structural Styling (The Minimalist Blueprint) --- */
+  
+  /* Borders: Hairline definition instead of thick lines */
+  --border-width: 1px;
+  --border-color-subtle: #eaeaea;
+  --border-color-strong: #111111; /* Used sparingly for crisp definition on active inputs */
+  
+  /* Border Radius: Tight, modern, and intentional. Avoids looking overly cartoonish or hyper-round. */
+  --radius-small: 4px;   /* For checkboxes, small tags, utility icons */
+  --radius-medium: 8px;  /* For input fields, buttons, small cards */
+  --radius-large: 12px;  /* For main dashboard cards or modal panels */
+
+  /* Shadows: Chromatic minimalism rejects heavy, dark drop-shadows. 
+     Instead, it relies on flat borders or incredibly faint diffusion. */
+  --shadow-none: none;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.02);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.03); /* Barely visible, ambient lift */
+
+  /* --- Typography --- */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  
+  /* Font Weights: Creating hierarchy strictly through weight contrast */
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-bold: 600;
+}
+
+/* ==========================================================================
+   Base Elements Application
+   ========================================================================== */
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+  margin: 0;
+  padding: 0;
+}
+
+/* Layout Containers / Bento Boxes */
+.card, .dashboard-panel {
+  background-color: var(--bg-secondary);
+  border: var(--border-width) solid var(--border-color-subtle);
+  border-radius: var(--radius-large);
+  box-shadow: var(--shadow-sm);
+  padding: 24px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* Subtle feedback on hover without breaking the flat aesthetic */
+.card:hover {
+  border-color: #dedede;
+  box-shadow: var(--shadow-md);
+}
+
+/* Typography Hierarchy */
+h1, h2, h3, h4 {
+  color: var(--text-primary);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.02em; /* Tighter letter spacing for a premium, editorial look */
+  margin-top: 0;
+}
+
+p, span, label {
+  font-weight: var(--weight-normal);
+}
+
+.secondary-label {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+/* ==========================================================================
+   Interactive & Form Elements (Where the Mint shines)
+   ========================================================================== */
+
+/* Buttons */
+.btn-primary {
+  background-color: var(--accent-mint);
+  color: var(--text-on-accent);
+  font-weight: var(--weight-medium);
+  font-size: 0.9rem;
+  border: none;
+  border-radius: var(--radius-medium);
+  padding: 10px 20px;
+  cursor: pointer;
+  transition: background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-primary:hover {
+  background-color: var(--accent-mint-hover);
+}
+
+.btn-primary:active {
+  transform: scale(0.98); /* Tactile press effect instead of complex visual changes */
+}
+
+/* Secondary Button - completely flat and structural */
+.btn-secondary {
+  background-color: transparent;
+  color: var(--text-primary);
+  border: var(--border-width) solid var(--border-color-strong);
+  border-radius: var(--radius-medium);
+  padding: 10px 20px;
+  font-weight: var(--weight-medium);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.btn-secondary:hover {
+  background-color: var(--bg-tertiary);
+}
+
+/* Text Inputs & Textareas */
+input[type="text"], 
+input[type="email"], 
+input[type="password"], 
+textarea {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  border: var(--border-width) solid var(--border-color-subtle);
+  border-radius: var(--radius-medium);
+  padding: 12px 16px;
+  font-size: 0.95rem;
+  font-family: var(--font-sans);
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+/* The magic moment: Mint is used strictly to highlight user focus */
+input[type="text"]:focus, 
+textarea:focus {
+  border-color: var(--text-primary); /* Keeps it grounded */
+  box-shadow: 0 0 0 2px var(--accent-mint); /* Pure light emission anchor */
+}
+
+/* Interactive Utilities (Habit checkboxes, toggles, tags) */
+.checkbox-custom {
+  width: 20px;
+  height: 20px;
+  border: var(--border-width) solid var(--border-color-subtle);
+  border-radius: var(--radius-small);
+  background-color: var(--bg-primary);
+  display: inline-block;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+/* When a task or habit is checked/completed */
+.checkbox-custom.checked {
+  background-color: var(--accent-mint);
+  border-color: var(--accent-mint);
+}
+
+/* Tiny notification dot or active habit streak badge */
+.badge-active {
+  background-color: var(--accent-mint-subtle);
+  color: var(--text-on-accent);
+  font-size: 0.75rem;
+  font-weight: var(--weight-bold);
+  padding: 4px 8px;
+  border-radius: var(--radius-small);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
