@@ -152,6 +152,7 @@ def get_flexible_tasks(db: Session, target_date: date, available_hours_per_day: 
     deadlines = db.query(Task).filter(
         Task.type == "deadline",
         Task.status == "pending",
+        or_(Task.snooze_until.is_(None), Task.snooze_until <= str(target_date)),
     ).all()
     
     now = datetime.now()
