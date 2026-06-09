@@ -1339,3 +1339,59 @@ main {
     border-radius: 4px;
     font-size: 0.75rem;
 }
+
+/* Undo toast */
+#undo-toast {
+    position: fixed;
+    bottom: 1.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.625rem 0.875rem;
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    z-index: 9999;
+    animation: undoSlideUp 0.2s ease;
+    white-space: nowrap;
+}
+
+@keyframes undoSlideUp {
+    from { transform: translateX(-50%) translateY(1rem); opacity: 0; }
+    to   { transform: translateX(-50%) translateY(0);    opacity: 1; }
+}
+
+.undo-toast-label {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+}
+
+.undo-toast-btn {
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border: none;
+    border-radius: 5px;
+    padding: 0.25rem 0.625rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+
+.undo-toast-btn:hover { opacity: 0.85; }
+
+.undo-toast-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0;
+    margin-left: 0.125rem;
+}
+
+.undo-toast-close:hover { color: var(--text-primary); }

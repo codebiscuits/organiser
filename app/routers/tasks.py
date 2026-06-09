@@ -1,6 +1,7 @@
+import json
 from datetime import date, time, datetime, timedelta
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -8,6 +9,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.task import Task, CompletedTask
 from app.models.recurrence import Recurrence, Projection
+from app.models.action_log import ActionLog
+from app.services.undo import task_to_dict, recurrence_to_dict, projections_to_list
 from app.schemas.task import (
     TaskCreate,
     TaskUpdate,
@@ -23,6 +26,15 @@ from app.services.prioritisation import get_prioritised_tasks_with_metadata
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+
+
+def _prune_old_logs(db):
+    cutoff = datetime.utcnow() - timedelta(minutes=30)
+    db.query(ActionLog).filter(ActionLog.performed_at < cutoff).delete()
+
+
+def _undo_trigger(log_id: int, label: str) -> str:
+    return json.dumps({"showUndo": {"id": log_id, "label": label}})
 
 
 class TaskTimelinePosition(BaseModel):
@@ -341,6 +353,12 @@ async def complete_task(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    task_title = task.title
+    task_snap = json.dumps(task_to_dict(task))
+    proj_snap = json.dumps(projections_to_list(
+        db.query(Projection).filter(Projection.task_id == task_id).all()
+    ))
+
     completed = CompletedTask(
         task_id=task.id,
         actual_duration=completion_data.actual_duration if completion_data else None,
@@ -349,6 +367,7 @@ async def complete_task(
         task_title=task.title,
     )
     db.add(completed)
+    db.flush()
 
     db.query(Projection).filter(
         Projection.task_id == task_id,
@@ -357,9 +376,22 @@ async def complete_task(
 
     if task.type in ("errand", "appointment", "deadline"):
         db.delete(task)
+
+    log = ActionLog(
+        action_type="complete",
+        task_id=task_id,
+        task_title=task_title,
+        task_snapshot=task_snap,
+        projections_snapshot=proj_snap,
+        completed_task_id=completed.id,
+    )
+    db.add(log)
+    _prune_old_logs(db)
+    db.flush()
+    log_id = log.id
+
     db.commit()
-    
-    return Response(status_code=200, headers={"HX-Trigger": "taskUpdated"})
+    return Response(status_code=200, headers={"HX-Trigger": _undo_trigger(log_id, f"'{task_title}' completed")})
 
 
 @router.get("/{task_id}/complete/variable", response_class=HTMLResponse)
@@ -405,6 +437,12 @@ async def complete_variable_recurring_task(
     if task.type != "variable_recurring":
         raise HTTPException(status_code=400, detail="Task is not variable recurring")
 
+    task_title = task.title
+    task_snap = json.dumps(task_to_dict(task))
+    proj_snap = json.dumps(projections_to_list(
+        db.query(Projection).filter(Projection.task_id == task_id).all()
+    ))
+
     completed = CompletedTask(
         task_id=task.id,
         actual_duration=actual_duration,
@@ -413,6 +451,7 @@ async def complete_variable_recurring_task(
         task_title=task.title,
     )
     db.add(completed)
+    db.flush()
 
     db.query(Projection).filter(
         Projection.task_id == task_id,
@@ -429,8 +468,24 @@ async def complete_variable_recurring_task(
             next_date += timedelta(days=1)
     db.add(Projection(task_id=task_id, due_date=next_date))
 
+    log = ActionLog(
+        action_type="complete",
+        task_id=task_id,
+        task_title=task_title,
+        task_snapshot=task_snap,
+        projections_snapshot=proj_snap,
+        completed_task_id=completed.id,
+    )
+    db.add(log)
+    _prune_old_logs(db)
+    db.flush()
+    log_id = log.id
+
     db.commit()
-    return Response(status_code=200, headers={"HX-Trigger": "taskUpdated"})
+    return Response(status_code=200, headers={"HX-Trigger": json.dumps({
+        "taskUpdated": True,
+        "showUndo": {"id": log_id, "label": f"'{task_title}' completed"},
+    })})
 
 
 @router.get("/{task_id}/complete/workout", response_class=HTMLResponse)
@@ -488,12 +543,19 @@ async def complete_workout_task(
     if task.type != "workout":
         raise HTTPException(status_code=400, detail="Task is not a workout")
 
+    task_title = task.title
+    task_snap = json.dumps(task_to_dict(task))
+    proj_snap = json.dumps(projections_to_list(
+        db.query(Projection).filter(Projection.task_id == task_id).all()
+    ))
+
     completed = CompletedTask(
         task_id=task.id,
         task_type=task.type,
         task_title=task.title,
     )
     db.add(completed)
+    db.flush()
 
     performed_set = PerformedSet(
         exercise_id=exercise_id,
@@ -503,14 +565,32 @@ async def complete_workout_task(
         intensity=intensity,
     )
     db.add(performed_set)
+    db.flush()
 
     db.query(Projection).filter(
         Projection.task_id == task_id,
         Projection.due_date == date.today()
     ).delete()
 
+    log = ActionLog(
+        action_type="complete",
+        task_id=task_id,
+        task_title=task_title,
+        task_snapshot=task_snap,
+        projections_snapshot=proj_snap,
+        completed_task_id=completed.id,
+        performed_set_id=performed_set.id,
+    )
+    db.add(log)
+    _prune_old_logs(db)
+    db.flush()
+    log_id = log.id
+
     db.commit()
-    return Response(status_code=200, headers={"HX-Trigger": "taskUpdated"})
+    return Response(status_code=200, headers={"HX-Trigger": json.dumps({
+        "taskUpdated": True,
+        "showUndo": {"id": log_id, "label": f"'{task_title}' completed"},
+    })})
 
 
 @router.post("/{task_id}/defer", response_class=HTMLResponse)
@@ -525,6 +605,12 @@ async def defer_task(request: Request, task_id: str, db: Session = Depends(get_d
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    task_title = task.title
+    task_snap = json.dumps(task_to_dict(task))
+    proj_snap = json.dumps(projections_to_list(
+        db.query(Projection).filter(Projection.task_id == task_id).all()
+    ))
+
     task.deferred_count = (task.deferred_count or 0) + 1
 
     today_projection = db.query(Projection).filter(
@@ -538,9 +624,20 @@ async def defer_task(request: Request, task_id: str, db: Session = Depends(get_d
         # Errands and deadlines have no projection — snooze them until tomorrow
         task.snooze_until = str(date.today() + timedelta(days=1))
 
+    log = ActionLog(
+        action_type="defer",
+        task_id=task_id,
+        task_title=task_title,
+        task_snapshot=task_snap,
+        projections_snapshot=proj_snap,
+    )
+    db.add(log)
+    _prune_old_logs(db)
+    db.flush()
+    log_id = log.id
+
     db.commit()
-    
-    return Response(status_code=200, headers={"HX-Trigger": "taskUpdated"})
+    return Response(status_code=200, headers={"HX-Trigger": _undo_trigger(log_id, f"'{task_title}' deferred")})
 
 
 @router.delete("/{task_id}", response_class=HTMLResponse)
@@ -555,19 +652,33 @@ async def delete_task(request: Request, task_id: str, db: Session = Depends(get_
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    task_title = task.title
+    task_snap = json.dumps(task_to_dict(task))
+    rec = db.query(Recurrence).filter(Recurrence.task_id == task_id).first()
+    rec_snap = json.dumps(recurrence_to_dict(rec)) if rec else None
+    proj_snap = json.dumps(projections_to_list(
+        db.query(Projection).filter(Projection.task_id == task_id).all()
+    ))
+
     db.query(Projection).filter(Projection.task_id == task_id).delete()
     db.query(Recurrence).filter(Recurrence.task_id == task_id).delete()
     db.delete(task)
 
-    db.commit()
-    
-    # Return refreshed task list
-    prioritised_tasks, capacity = get_prioritised_tasks_with_metadata(db, date.today())
-    return templates.TemplateResponse(
-        request,
-        "components/task_list.html",
-        {"tasks": prioritised_tasks, "capacity": capacity},
+    log = ActionLog(
+        action_type="delete",
+        task_id=task_id,
+        task_title=task_title,
+        task_snapshot=task_snap,
+        recurrence_snapshot=rec_snap,
+        projections_snapshot=proj_snap,
     )
+    db.add(log)
+    _prune_old_logs(db)
+    db.flush()
+    log_id = log.id
+
+    db.commit()
+    return Response(status_code=200, headers={"HX-Trigger": _undo_trigger(log_id, f"'{task_title}' deleted")})
 
 
 @router.get("/{task_id}/edit", response_class=HTMLResponse)
@@ -587,11 +698,14 @@ async def edit_task_form(request: Request, task_id: str, db: Session = Depends(g
 
 
 @router.put("/{task_id}", response_model=TaskResponse)
-async def update_task(task_id: str, task_data: TaskUpdate, db: Session = Depends(get_db)):
+async def update_task(task_id: str, task_data: TaskUpdate, response: Response, db: Session = Depends(get_db)):
     """Update an existing task."""
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+
+    task_snap = json.dumps(task_to_dict(task))
+    task_title = task.title
     
     if task_data.title is not None:
         task.title = task_data.title
@@ -646,7 +760,18 @@ async def update_task(task_id: str, task_data: TaskUpdate, db: Session = Depends
                 end_date=task_data.recurrence.end_date.date() if task_data.recurrence.end_date else None,
             )
             db.add(recurrence)
-    
+
+    log = ActionLog(
+        action_type="edit",
+        task_id=task_id,
+        task_title=task_title,
+        task_snapshot=task_snap,
+    )
+    db.add(log)
+    _prune_old_logs(db)
+    db.flush()
+    response.headers["X-Undo-Log-Id"] = str(log.id)
+
     db.commit()
     db.refresh(task)
     return task

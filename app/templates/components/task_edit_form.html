@@ -98,8 +98,10 @@
                 body: JSON.stringify(payload)
             });
             if (response.ok) {
+                const logId = response.headers.get('X-Undo-Log-Id');
                 this.closeModal();
                 htmx.trigger(document.body, 'taskUpdated');
+                if (logId) showUndoToast(parseInt(logId), `'${this.form.title}' edited`);
             } else {
                 const error = await response.json();
                 alert('Error updating task: ' + (error.detail || 'Unknown error'));

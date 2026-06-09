@@ -46,7 +46,7 @@
                 hx-post="/tasks/{{ pt.task.id }}/complete"
                 hx-trigger="click"
                 hx-swap="none"
-                hx-on::after-request="htmx.trigger(document.body, 'taskUpdated')"
+                hx-on::after-request="htmx.trigger(document.body, 'taskUpdated'); handleUndoHeader(event.detail.xhr)"
                 title="Done"
             >✓</button>
             {% endif %}
@@ -55,7 +55,7 @@
                 hx-post="/tasks/{{ pt.task.id }}/defer"
                 hx-trigger="click"
                 hx-swap="none"
-                hx-on::after-request="htmx.trigger(document.body, 'taskUpdated')"
+                hx-on::after-request="htmx.trigger(document.body, 'taskUpdated'); handleUndoHeader(event.detail.xhr)"
                 title="Defer"
             >⏱</button>
             <button 
@@ -66,12 +66,13 @@
                 hx-swap="beforeend"
                 title="Edit"
             >✎</button>
-            <button 
+            <button
                 class="btn-mini btn-delete"
                 hx-delete="/tasks/{{ pt.task.id }}"
                 hx-trigger="click"
                 hx-swap="none"
                 hx-confirm="Delete '{{ pt.task.title }}'?"
+                hx-on::after-request="htmx.trigger(document.body, 'taskUpdated'); handleUndoHeader(event.detail.xhr)"
                 title="Delete"
             >✕</button>
         </div>

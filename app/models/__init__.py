@@ -10,3 +10,4 @@ from app.models.recurrence import Recurrence, Projection
 from app.models.workout import MuscleGroup, Exercise, ExerciseMuscle, PerformedSet
 from app.models.user import User
 from app.models.preset import TaskPreset
+from app.models.action_log import ActionLog

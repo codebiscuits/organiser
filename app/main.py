@@ -4,7 +4,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.database import engine, run_migrations
 from app.models import Base
-from app.routers import tasks, workouts, admin, presets
+from app.routers import tasks, workouts, admin, presets, undo
 
 app = FastAPI(title="Life Organiser")
 
@@ -27,6 +27,7 @@ app.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 app.include_router(workouts.router, prefix="/workouts", tags=["workouts"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(presets.router, prefix="/presets", tags=["presets"])
+app.include_router(undo.router, prefix="/undo", tags=["undo"])
 
 
 if __name__ == "__main__":

@@ -186,7 +186,9 @@ class TestCompleteTask:
 
         resp = client.post(f"/tasks/{task_id}/complete")
         assert resp.status_code == 200
-        assert resp.headers.get("hx-trigger") == "taskUpdated"
+        import json as _json
+        trigger = _json.loads(resp.headers.get("hx-trigger", "{}"))
+        assert "showUndo" in trigger
 
         assert db.query(Task).filter(Task.id == task_id).first() is None
 
@@ -259,7 +261,9 @@ class TestDeferTask:
 
         resp = client.post(f"/tasks/{task_id}/defer")
         assert resp.status_code == 200
-        assert resp.headers.get("hx-trigger") == "taskUpdated"
+        import json as _json
+        trigger = _json.loads(resp.headers.get("hx-trigger", "{}"))
+        assert "showUndo" in trigger
 
         task = db.query(Task).filter(Task.id == task_id).first()
         db.refresh(task)
