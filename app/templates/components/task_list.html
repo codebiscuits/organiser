@@ -5,7 +5,7 @@
 {% endif %}
 {% if tasks %}
     {% for pt in tasks %}
-    <article class="task-card-mini" data-task-id="{{ pt.task.id }}">
+    <article class="task-card-mini{% if pt.due_today %} task-card-mini--due-today{% endif %}" data-task-id="{{ pt.task.id }}">
         <div class="mini-content">
             <div class="mini-header">
                 <span class="mini-title">

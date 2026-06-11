@@ -31,7 +31,10 @@
         <tbody>
             {% for item in completed_tasks %}
             <tr>
-                <td>{{ item.task_title or '(deleted task)' }}</td>
+                <td>
+                    {{ item.task_title or '(deleted task)' }}
+                    {% if item.auto_completed %}<span class="badge badge-auto" title="Automatically completed because it was overdue">Auto</span>{% endif %}
+                </td>
                 <td>{{ item.completed_at.strftime('%Y-%m-%d %H:%M') if item.completed_at else '' }}</td>
                 <td>{{ item.actual_duration }} min</td>
                 <td>{{ item.notes or '' }}</td>

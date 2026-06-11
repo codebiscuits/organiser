@@ -1,5 +1,5 @@
 {% if task %}
-<article class="task-card-focus" data-task-id="{{ task.task.id }}" data-priority="{{ task.priority_score }}">
+<article class="task-card-focus{% if task.due_today %} task-card-focus--due-today{% endif %}" data-task-id="{{ task.task.id }}" data-priority="{{ task.priority_score }}">
     <h1 class="focus-title">
         {% if task.task.type == 'workout' and task.selected_exercise %}
             Workout: {{ task.selected_exercise }}

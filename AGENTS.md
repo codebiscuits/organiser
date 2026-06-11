@@ -118,10 +118,27 @@ performed_sets:  id, exercise_id FK, created_at, reps, weight_kg, num_sets, inte
 
 ### completed_tasks
 
-Historical log. Written on completion; never modified.
+Historical log. Written on completion; never modified (except deletion on undo).
 
 ```
-id, task_id, completed_at, actual_duration (minutes), notes
+id, task_id, completed_at, actual_duration (minutes), notes,
+task_type, task_title,       -- snapshots, survive task deletion
+auto_completed (bool)        -- True if swept by auto_complete_overdue_tasks(), not user-completed
+```
+
+### action_log
+
+Generic undo log for complete/defer/edit/delete actions. Pruned after 30 minutes (`_prune_old_logs`).
+
+```
+id, action_type ('complete'|'defer'|'edit'|'delete'),
+task_id, task_title,
+task_snapshot (JSON of task row before the action),
+recurrence_snapshot (JSON, delete only),
+projections_snapshot (JSON array of due_date strings before the action),
+completed_task_id (FK -> completed_tasks.id, complete actions),
+performed_set_id (FK -> performed_sets.id, workout completions),
+performed_at
 ```
 
 ### users
@@ -156,17 +173,21 @@ class PrioritisedTask:
     is_fixed: bool
     scheduled_time: datetime | None       # assigned by algorithm
     selected_exercise: str | None         # workout tasks only
+    due_today: bool = False               # deadline due today: pinned to front, styled red
 ```
 
 ### Main entry point
 
-`get_prioritised_tasks_with_metadata(db, target_date, available_hours_per_day=6)` returns `(list[PrioritisedTask], capacity_dict)`.
+`get_prioritised_tasks_with_metadata(db, target_date, available_hours_per_day=6)` returns `(list[PrioritisedTask], capacity_dict)`. Both this and `get_prioritised_tasks()` delegate to `_schedule_for_date(db, target_date, available_hours_per_day)`.
 
 ### Algorithm steps
 
 1. **`get_fixed_tasks(db, date)`** — Appointments on `target_date` + recurring tasks with `scheduled_time` that have a projection for `target_date`. Sorted by `scheduled_time`.
 
-2. **`get_flexible_tasks(db, date)`** — Deadlines (not past deadline) + recurring/errand tasks from projection table without `scheduled_at`. Sorted by `sort_key()` descending: `(priority_score, recurrence_timescale, deferred_count)`.
+2. **`get_flexible_tasks(db, date)`** — Deadlines + recurring/errand tasks from projection table without `scheduled_at`. Sorted by `sort_key()` descending: `(due_today, priority_score, recurrence_timescale, deferred_count)`.
+   - Deadlines with `deadline_date < target_date` are skipped entirely (handled by the auto-complete sweep, not the scheduler).
+   - Deadlines with `deadline_date == today` get `due_today=True` and `urgency=3` (forced), regardless of how much buffer time remains.
+   - All other deadlines use `calculate_urgency_for_deadline()` as before.
 
 3. **`calculate_gaps(fixed, date, include_afternoon=True)`** — Computes free `TimeSlot` list between fixed tasks within 9am–6pm. If date == today and now > 9am, gaps start from now.
 
@@ -177,6 +198,10 @@ class PrioritisedTask:
    - For each auto task: `find_fitting_gap()` → first gap with enough minutes (skips afternoon gaps if `allow_afternoon=False`) → places task at gap start → `split_gap()` trims the gap
 
 5. **`populate_workout_exercises(db, scheduled)`** — Runs `select_todays_exercises(count=1)` and assigns result to all workout tasks in the schedule.
+
+### `_schedule_for_date(db, target_date, available_hours_per_day)`
+
+Wraps steps 1-5. Splits `get_flexible_tasks()` output into `due_today` and `other_flexible`, then builds the final schedule as `due_today + schedule_tasks_into_timeline(fixed, other_flexible, target_date)` — so due-today deadlines always lead the list, ahead of fixed appointments and everything else. Returns `(fixed, flexible, scheduled)`.
 
 ### Priority score
 
@@ -260,6 +285,31 @@ When creating a task via API or admin:
 ### Deletion (admin or user)
 - Delete projections, recurrence, then the task
 - Does NOT write to `completed_tasks`
+
+### Auto-Complete Sweep (Overdue)
+
+`auto_complete_overdue_tasks(db)` (in `routers/tasks.py`) runs at the top of `GET /tasks/`, `/tasks/current`, `/tasks/upcoming`, and `/tasks/timeline`:
+- Queries `pending` appointments/deadlines
+- Appointments: `scheduled_at.date() < today` → swept
+- Deadlines: `deadline_at.date() < today` → swept (deadlines due *today* are handled by due-today pinning instead, see above)
+- For each swept task: insert into `completed_tasks` (`auto_completed=True`), insert an `action_log` row (`action_type="complete"`), delete the task
+- Returns `[(log_id, title), ...]`; `_auto_complete_trigger(db)` turns this into an `HX-Trigger: showUndo` header (single or combined label) on the response
+
+---
+
+## Undo System (`routers/undo.py`)
+
+Every mutating action (`complete`, `defer`, `edit`, `delete` — including the auto-complete sweep) writes an `action_log` row and returns/triggers `showUndo` with the log id(s). The toast (`base.html`) shows a single Undo button:
+- `POST /undo/{log_id}` — undo one entry
+- `POST /undo/batch/{id1,id2,...}` — undo multiple entries (used for the overdue sweep's combined toast)
+
+Both delegate to the same per-type handlers:
+- `_undo_complete` — restores the task from `task_snapshot` (recreating it if deleted), removes the `completed_tasks`/`performed_sets` rows, restores projections. If `completed_tasks.auto_completed` was `True`, also bumps `scheduled_at`/`deadline_at` to today (a "second chance" so it doesn't get swept again immediately).
+- `_undo_defer` — restores `deferred_count`/`snooze_until` and projections from the snapshot
+- `_undo_edit` — re-applies the pre-edit `task_snapshot` via `apply_task_dict`
+- `_undo_delete` — recreates the task (and recurrence/projections if present)
+
+`action_log` rows are pruned after 30 minutes (`_prune_old_logs`), so undo is only available briefly after the action.
 
 ---
 

@@ -554,11 +554,35 @@ class TestGetFlexibleTasksDB:
         titles = [pt.task.title for pt in result]
         assert "Evening read" in titles
 
-    def test_past_deadline_excluded(self, db):
+    def test_deadline_due_today_is_pinned(self, db):
+        """A deadline whose time has passed today is still 'due today': included,
+        flagged due_today, and given urgency 3 — not silently dropped."""
+        task = Task(
+            type="deadline",
+            title="Due today task",
+            deadline_at=datetime.now() - timedelta(hours=2),
+            estimated_duration=60,
+            importance=2,
+            status="pending",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        task_id = task.id
+
+        result = get_flexible_tasks(db, date.today())
+        matching = [pt for pt in result if pt.task.id == task_id]
+        assert len(matching) == 1
+        assert matching[0].due_today is True
+        assert matching[0].calculated_urgency == 3
+
+    def test_deadline_from_previous_day_excluded(self, db):
+        """A deadline whose due date has already passed (yesterday or earlier)
+        is excluded from flexible tasks — it's handled by the auto-complete sweep."""
         task = Task(
             type="deadline",
             title="Overdue task",
-            deadline_at=datetime.now() - timedelta(hours=2),
+            deadline_at=datetime.now() - timedelta(days=1),
             estimated_duration=60,
             importance=2,
             status="pending",
@@ -582,6 +606,61 @@ class TestGetFlexibleTasksDB:
         # Higher priority should come first
         titles = [pt.task.title for pt in result]
         assert titles.index("High") < titles.index("Low")
+
+
+class TestDueTodayPinningDB:
+    """Deadlines due today are pulled out of gap-scheduling and pinned to the
+    front of the schedule, ahead of everything else."""
+
+    def test_due_today_deadline_is_first_in_schedule(self, db):
+        deadline = Task(
+            type="deadline",
+            title="Due today",
+            deadline_at=datetime.now() - timedelta(hours=1),
+            estimated_duration=60,
+            importance=2,
+            status="pending",
+        )
+        errand = Task(
+            type="errand",
+            title="Some errand",
+            estimated_duration=15,
+            importance=3,
+            urgency=3,
+            status="pending",
+        )
+        db.add_all([deadline, errand])
+        db.commit()
+
+        scheduled, _ = get_prioritised_tasks_with_metadata(db, date.today())
+        assert scheduled[0].task.title == "Due today"
+        assert scheduled[0].due_today is True
+
+    def test_multiple_due_today_sorted_by_priority_among_themselves(self, db):
+        low = Task(
+            type="deadline",
+            title="Low importance, due today",
+            deadline_at=datetime.now() - timedelta(hours=1),
+            estimated_duration=30,
+            importance=1,
+            status="pending",
+        )
+        high = Task(
+            type="deadline",
+            title="High importance, due today",
+            deadline_at=datetime.now() - timedelta(hours=1),
+            estimated_duration=30,
+            importance=3,
+            status="pending",
+        )
+        db.add_all([low, high])
+        db.commit()
+
+        scheduled, _ = get_prioritised_tasks_with_metadata(db, date.today())
+        due_today_tasks = [pt for pt in scheduled if pt.due_today]
+        assert len(due_today_tasks) == 2
+        assert due_today_tasks[0].task.title == "High importance, due today"
+        assert due_today_tasks[1].task.title == "Low importance, due today"
 
 
 class TestPrepDurationInGaps:

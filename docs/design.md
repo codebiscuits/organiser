@@ -26,6 +26,7 @@ A personal task management PWA that automatically builds a prioritised daily tod
   - Reminder notifications at 1 day and 1 hour before
   - Removed from tasks table on completion
   - Can be manually scheduled in any window (including evening for work shifts)
+  - If `scheduled_at` falls before today and it's still pending, it's auto-completed by the overdue sweep (see "Overdue Handling" below)
 
 ### 2. Deadline
 - **Fields:** title, deadline_datetime, estimated_duration, importance (1-3), notes
@@ -33,7 +34,9 @@ A personal task management PWA that automatically builds a prioritised daily tod
 - **Behaviour:** 
   - Displays live countdown to deadline
   - Blocks estimated duration
+  - If due today, urgency is forced to 3 and the task is pinned to the top of the list (red, "due today") instead of being scheduled into a gap
   - Removed from tasks table on completion
+  - If the due date falls before today and it's still pending, it's auto-completed by the overdue sweep (see "Overdue Handling" below)
 
 ### 3. Recurring Task
 - **Fields:** title, estimated_duration, importance (1-3), urgency (1-3), allow_afternoon (boolean), scheduled_time (optional), notes
@@ -190,6 +193,8 @@ Tasks that cannot fit into any gap are not scheduled for the day.
 - **Current task:** Large, prominent card at top
 - **Next tasks:** Scrollable list below/to the side
 - **Deadline tasks:** Show live countdown timer
+- **Due-today deadlines:** Styled red and pinned to the front of the list (current task card and/or top of "Up Next") until completed or deferred (see "Overdue Handling" below)
+- **On load:** Triggers the overdue auto-complete sweep, which may surface an "Undo" toast
 
 ### Timeline View
 - **Visual timeline:** Day view from 9am-11pm with hour markers
@@ -217,17 +222,22 @@ Tasks that cannot fit into any gap are not scheduled for the day.
 - If variable recurring: prompts for days until next occurrence
 - If errand/appointment/deadline: removes from `tasks` table
 - If workout: prompts for sets, reps, weight, intensity per exercise
+- Writes an `action_log` entry and triggers an "Undo" toast (available for 30 minutes)
 - Triggers list recalculation
 
 **Defer:**
 - Moves to next day
 - Increments `deferred_count`
+- Writes an `action_log` entry and triggers an "Undo" toast
 - Triggers list recalculation
 
 **Delete:**
 - Removes task entirely
 - Does NOT record in completed_tasks (no historical record)
+- Writes an `action_log` entry (with task/recurrence/projection snapshots) and triggers an "Undo" toast
 - Triggers list recalculation
+
+**Auto-complete (overdue sweep):** see "Overdue Handling" below — not a user-initiated action, but follows the same `completed_tasks` + `action_log` + Undo pattern as "Done".
 
 ### Capacity Warning
 
@@ -251,6 +261,28 @@ When recalculation shows insufficient time for remaining high-priority (score >=
 1. Prompt: "When should this task recur?"
 2. Input: number of days
 3. Create entry in projection table for that date
+
+---
+
+## Overdue Handling
+
+Appointments and deadlines used to silently vanish from the live list once their time/date passed, leaving stale `pending` rows behind forever with no record of what happened. Two mechanisms address this:
+
+### Due-Today Pinning (Deadlines)
+
+A deadline whose `deadline_at` falls on today's date is not scheduled into a gap like a normal flexible task. Instead it's flagged `due_today=True`, given urgency 3, and pinned to the very front of the schedule (red styling) for the whole day. If several deadlines are due today, the highest-priority one becomes the "current task" card and the rest appear red at the top of "Up Next". It stays pinned until the user completes or defers it.
+
+### Auto-Complete Sweep (Overdue)
+
+On every load of the main task views (`/`, `/tasks/current`, `/tasks/upcoming`, `/tasks/timeline`), `auto_complete_overdue_tasks()` checks for:
+- pending **appointments** with `scheduled_at.date() < today`
+- pending **deadlines** with `deadline_at.date() < today` (i.e. the day after their due-today red day)
+
+Any matches are auto-completed: snapshotted into `completed_tasks` (`auto_completed=True`), logged to `action_log`, and removed from `tasks`. Errands have no date field and are never swept this way.
+
+### Undo
+
+The sweep surfaces a toast with a single Undo button (`"'X' auto-completed (overdue)"` or `"{N} tasks auto-completed (overdue)"`), backed by `POST /undo/{id}` or `POST /undo/batch/{id1,id2,...}`. Undoing an auto-completed item bumps its `scheduled_at`/`deadline_at` to today, so it reappears (pinned as due-today for deadlines) instead of being swept again on the next load.
 
 ---
 
@@ -332,7 +364,29 @@ CREATE TABLE completed_tasks (
     task_id TEXT,
     completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     actual_duration INT,  -- minutes
-    notes TEXT
+    notes TEXT,
+    task_type TEXT,  -- snapshot, survives task deletion
+    task_title TEXT,  -- snapshot, survives task deletion
+    auto_completed BOOLEAN DEFAULT FALSE  -- true if swept by the overdue auto-complete sweep
+);
+```
+
+### Action Log (Undo)
+
+Generic undo log for complete/defer/edit/delete actions, including the overdue auto-complete sweep. Pruned after 30 minutes.
+
+```sql
+CREATE TABLE action_log (
+    id INTEGER PRIMARY KEY,
+    action_type TEXT NOT NULL,  -- complete | defer | edit | delete
+    task_id TEXT,
+    task_title TEXT,
+    task_snapshot TEXT,  -- JSON of the task row before the action
+    recurrence_snapshot TEXT,  -- JSON, delete only
+    projections_snapshot TEXT,  -- JSON array of due_date strings before the action
+    completed_task_id INTEGER REFERENCES completed_tasks(id),  -- complete actions
+    performed_set_id INTEGER REFERENCES performed_sets(id),  -- workout completions
+    performed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 

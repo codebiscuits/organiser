@@ -625,6 +625,7 @@ async def admin_completed_tasks(
         CompletedTask.completed_at,
         CompletedTask.actual_duration,
         CompletedTask.notes,
+        CompletedTask.auto_completed,
         sqlfunc.coalesce(CompletedTask.task_title, Task.title).label("task_title"),
     ).outerjoin(Task, CompletedTask.task_id == Task.id)
 

@@ -18,6 +18,7 @@ def run_migrations(eng):
         "ALTER TABLE tasks ADD COLUMN allowed_days VARCHAR",
         "ALTER TABLE completed_tasks ADD COLUMN task_type VARCHAR",
         "ALTER TABLE completed_tasks ADD COLUMN task_title VARCHAR",
+        "ALTER TABLE completed_tasks ADD COLUMN auto_completed BOOLEAN DEFAULT 0",
     ]
     with eng.connect() as conn:
         for sql in migrations:

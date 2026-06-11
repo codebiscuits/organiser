@@ -1195,3 +1195,126 @@ class TestFullDaySchedulingScenario:
         titles = [t["title"] for t in data]
         assert "Weekly Review" in titles
         assert "Budget Meeting" in titles
+
+
+# ---------------------------------------------------------------------------
+# Auto-complete sweep for overdue appointments/deadlines
+# ---------------------------------------------------------------------------
+
+class TestAutoCompleteOverdueSweep:
+    def _overdue_appointment(self, db, title="Yesterday's meeting"):
+        task = Task(
+            type="appointment", title=title,
+            scheduled_at=datetime.combine(date.today() - timedelta(days=1), time(10, 0)),
+            estimated_duration=60, importance=2, status="pending",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        return task
+
+    def _overdue_deadline(self, db, title="Last week's report"):
+        task = Task(
+            type="deadline", title=title,
+            deadline_at=datetime.combine(date.today() - timedelta(days=1), time(17, 0)),
+            estimated_duration=60, importance=2, status="pending",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        return task
+
+    def test_overdue_appointment_auto_completed_on_load(self, client, db):
+        task = self._overdue_appointment(db)
+        task_id = task.id
+
+        resp = client.get("/tasks/")
+        assert resp.status_code == 200
+
+        assert db.query(Task).filter(Task.id == task_id).first() is None
+        completed = db.query(CompletedTask).filter(CompletedTask.task_id == task_id).first()
+        assert completed is not None
+        assert completed.auto_completed is True
+
+        import json as _json
+        trigger = _json.loads(resp.headers.get("hx-trigger", "{}"))
+        assert "showUndo" in trigger
+        assert "auto-completed" in trigger["showUndo"]["label"]
+
+    def test_overdue_deadline_auto_completed_on_load(self, client, db):
+        task = self._overdue_deadline(db)
+        task_id = task.id
+
+        resp = client.get("/tasks/")
+        assert resp.status_code == 200
+
+        assert db.query(Task).filter(Task.id == task_id).first() is None
+        completed = db.query(CompletedTask).filter(CompletedTask.task_id == task_id).first()
+        assert completed is not None
+        assert completed.auto_completed is True
+
+    def test_deadline_due_today_not_auto_completed(self, client, db):
+        task = Task(
+            type="deadline", title="Due today",
+            deadline_at=datetime.combine(date.today(), time(17, 0)),
+            estimated_duration=60, importance=2, status="pending",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        task_id = task.id
+
+        resp = client.get("/tasks/")
+        assert resp.status_code == 200
+
+        assert db.query(Task).filter(Task.id == task_id).first() is not None
+        assert db.query(CompletedTask).filter(CompletedTask.task_id == task_id).first() is None
+
+    def test_multiple_overdue_tasks_swept_with_combined_label(self, client, db):
+        appt = self._overdue_appointment(db, title="Old meeting")
+        deadline = self._overdue_deadline(db, title="Old report")
+
+        resp = client.get("/tasks/")
+        assert resp.status_code == 200
+
+        import json as _json
+        trigger = _json.loads(resp.headers.get("hx-trigger", "{}"))
+        assert "2 tasks auto-completed (overdue)" in trigger["showUndo"]["label"]
+        assert len(trigger["showUndo"]["ids"]) == 2
+
+        assert db.query(Task).filter(Task.id == appt.id).first() is None
+        assert db.query(Task).filter(Task.id == deadline.id).first() is None
+
+    def test_undo_batch_restores_appointment_as_due_today(self, client, db):
+        task = self._overdue_appointment(db)
+        task_id = task.id
+
+        resp = client.get("/tasks/")
+        import json as _json
+        trigger = _json.loads(resp.headers.get("hx-trigger", "{}"))
+        log_id = trigger["showUndo"]["ids"][0]
+
+        undo_resp = client.post(f"/undo/batch/{log_id}")
+        assert undo_resp.status_code == 200
+
+        restored = db.query(Task).filter(Task.id == task_id).first()
+        assert restored is not None
+        assert restored.scheduled_at.date() == date.today()
+        assert db.query(CompletedTask).filter(CompletedTask.task_id == task_id).first() is None
+
+    def test_undo_single_restores_deadline_as_due_today(self, client, db):
+        task = self._overdue_deadline(db)
+        task_id = task.id
+
+        resp = client.get("/tasks/")
+        import json as _json
+        trigger = _json.loads(resp.headers.get("hx-trigger", "{}"))
+        log_id = trigger["showUndo"]["ids"][0]
+
+        undo_resp = client.post(f"/undo/{log_id}")
+        assert undo_resp.status_code == 200
+
+        restored = db.query(Task).filter(Task.id == task_id).first()
+        assert restored is not None
+        assert restored.deadline_at.date() == date.today()
+        assert db.query(CompletedTask).filter(CompletedTask.task_id == task_id).first() is None

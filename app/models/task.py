@@ -41,3 +41,4 @@ class CompletedTask(Base):
     notes = Column(Text)
     task_type = Column(String)  # snapshot at completion time
     task_title = Column(String)  # snapshot at completion time
+    auto_completed = Column(Boolean, default=False)  # True if completed by the overdue sweep, not the user

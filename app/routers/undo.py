@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -36,10 +36,37 @@ async def undo_action(log_id: int, db: Session = Depends(get_db)):
     return Response(status_code=200, headers={"HX-Trigger": "taskUpdated"})
 
 
+@router.post("/batch/{ids}")
+async def undo_batch(ids: str, db: Session = Depends(get_db)):
+    """Undo multiple action_log entries at once (e.g. a batch of auto-completions)."""
+    log_ids = [int(part) for part in ids.split(",") if part]
+
+    for log_id in log_ids:
+        log = db.query(ActionLog).filter(ActionLog.id == log_id).first()
+        if not log:
+            continue
+
+        if log.action_type == "complete":
+            _undo_complete(log, db)
+        elif log.action_type == "defer":
+            _undo_defer(log, db)
+        elif log.action_type == "edit":
+            _undo_edit(log, db)
+        elif log.action_type == "delete":
+            _undo_delete(log, db)
+
+        db.delete(log)
+
+    db.commit()
+    return Response(status_code=200, headers={"HX-Trigger": "taskUpdated"})
+
+
 def _undo_complete(log, db):
+    auto_completed = False
     if log.completed_task_id:
         ct = db.query(CompletedTask).filter(CompletedTask.id == log.completed_task_id).first()
         if ct:
+            auto_completed = bool(ct.auto_completed)
             db.delete(ct)
 
     if log.performed_set_id:
@@ -50,8 +77,18 @@ def _undo_complete(log, db):
     snap = json.loads(log.task_snapshot)
     task = db.query(Task).filter(Task.id == log.task_id).first()
     if not task:
-        db.add(task_from_dict(snap))
+        task = task_from_dict(snap)
+        db.add(task)
         db.flush()
+
+    if auto_completed:
+        # The task was overdue when auto-completed — give it a fresh "due today"
+        # so it's pinned and visible again rather than silently overdue once more.
+        today = date.today()
+        if task.type == "appointment" and task.scheduled_at and task.scheduled_at.date() < today:
+            task.scheduled_at = datetime.combine(today, task.scheduled_at.time())
+        elif task.type == "deadline" and task.deadline_at and task.deadline_at.date() < today:
+            task.deadline_at = datetime.combine(today, task.deadline_at.time())
 
     db.query(Projection).filter(Projection.task_id == log.task_id).delete()
     for due_date_str in json.loads(log.projections_snapshot or "[]"):

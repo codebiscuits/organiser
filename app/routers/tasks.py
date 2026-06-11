@@ -33,8 +33,82 @@ def _prune_old_logs(db):
     db.query(ActionLog).filter(ActionLog.performed_at < cutoff).delete()
 
 
-def _undo_trigger(log_id: int, label: str) -> str:
-    return json.dumps({"showUndo": {"id": log_id, "label": label}})
+def _undo_trigger(log_ids: int | list[int], label: str) -> str:
+    if isinstance(log_ids, int):
+        log_ids = [log_ids]
+    return json.dumps({"showUndo": {"ids": log_ids, "label": label}})
+
+
+def auto_complete_overdue_tasks(db: Session) -> list[tuple[int, str]]:
+    """
+    Auto-complete appointments and deadlines whose date has fully passed
+    while still pending.
+
+    - Appointments: scheduled_at.date() < today
+    - Deadlines: deadline_at.date() < today (deadlines due today get a full
+      day pinned to the top of the live list before this applies)
+
+    Returns a list of (log_id, title) for any tasks swept, so callers can
+    surface an undo toast.
+    """
+    today = date.today()
+    overdue = db.query(Task).filter(
+        Task.status == "pending",
+        Task.type.in_(("appointment", "deadline")),
+    ).all()
+
+    swept = []
+    for task in overdue:
+        cutoff = task.scheduled_at if task.type == "appointment" else task.deadline_at
+        if not cutoff or cutoff.date() >= today:
+            continue
+
+        task_title = task.title
+        task_snap = json.dumps(task_to_dict(task))
+        proj_snap = json.dumps(projections_to_list(
+            db.query(Projection).filter(Projection.task_id == task.id).all()
+        ))
+
+        completed = CompletedTask(
+            task_id=task.id,
+            task_type=task.type,
+            task_title=task.title,
+            auto_completed=True,
+        )
+        db.add(completed)
+        db.flush()
+
+        db.delete(task)
+
+        log = ActionLog(
+            action_type="complete",
+            task_id=task.id,
+            task_title=task_title,
+            task_snapshot=task_snap,
+            projections_snapshot=proj_snap,
+            completed_task_id=completed.id,
+        )
+        db.add(log)
+        db.flush()
+
+        swept.append((log.id, task_title))
+
+    if swept:
+        _prune_old_logs(db)
+        db.commit()
+
+    return swept
+
+
+def _auto_complete_trigger(db: Session) -> str | None:
+    swept = auto_complete_overdue_tasks(db)
+    if not swept:
+        return None
+    if len(swept) == 1:
+        label = f"'{swept[0][1]}' auto-completed (overdue)"
+    else:
+        label = f"{len(swept)} tasks auto-completed (overdue)"
+    return _undo_trigger([log_id for log_id, _ in swept], label)
 
 
 class TaskTimelinePosition(BaseModel):
@@ -50,35 +124,47 @@ class TimelineReorderRequest(BaseModel):
 @router.get("/", response_class=HTMLResponse)
 async def list_tasks(request: Request, db: Session = Depends(get_db)):
     """Get prioritised task list for today."""
+    trigger = _auto_complete_trigger(db)
     prioritised_tasks, capacity = get_prioritised_tasks_with_metadata(db, date.today())
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request,
         "components/task_list.html",
         {"tasks": prioritised_tasks, "capacity": capacity},
     )
+    if trigger:
+        response.headers["HX-Trigger"] = trigger
+    return response
 
 
 @router.get("/current", response_class=HTMLResponse)
 async def current_task(request: Request, db: Session = Depends(get_db)):
     """Get the current (highest priority) task for today."""
+    trigger = _auto_complete_trigger(db)
     prioritised_tasks, _ = get_prioritised_tasks_with_metadata(db, date.today())
     current = prioritised_tasks[0] if prioritised_tasks else None
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request,
         "components/current_task.html",
         {"task": current},
     )
+    if trigger:
+        response.headers["HX-Trigger"] = trigger
+    return response
 
 
 @router.get("/upcoming", response_class=HTMLResponse)
 async def upcoming_tasks(request: Request, db: Session = Depends(get_db)):
     """Get upcoming tasks (all except current)."""
+    trigger = _auto_complete_trigger(db)
     prioritised_tasks, capacity = get_prioritised_tasks_with_metadata(db, date.today())
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request,
         "components/task_list.html",
         {"tasks": prioritised_tasks[1:], "capacity": capacity},
     )
+    if trigger:
+        response.headers["HX-Trigger"] = trigger
+    return response
 
 
 @router.get("/new", response_class=HTMLResponse)
@@ -102,17 +188,21 @@ async def timeline_view(request: Request, db: Session = Depends(get_db)):
     Displays tasks on a visual timeline where users can drag and drop
     to reorder flexible tasks.
     """
+    trigger = _auto_complete_trigger(db)
     prioritised_tasks, _ = get_prioritised_tasks_with_metadata(db, date.today())
     start_hour = max(9, datetime.now().hour)
     visible_tasks = [
         pt for pt in prioritised_tasks
         if pt.scheduled_time and pt.scheduled_time.hour >= start_hour
     ]
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request,
         "timeline.html",
         {"tasks": visible_tasks, "start_hour": start_hour, "today": date.today()},
     )
+    if trigger:
+        response.headers["HX-Trigger"] = trigger
+    return response
 
 
 @router.get("/week", response_class=HTMLResponse)
@@ -484,7 +574,7 @@ async def complete_variable_recurring_task(
     db.commit()
     return Response(status_code=200, headers={"HX-Trigger": json.dumps({
         "taskUpdated": True,
-        "showUndo": {"id": log_id, "label": f"'{task_title}' completed"},
+        "showUndo": {"ids": [log_id], "label": f"'{task_title}' completed"},
     })})
 
 
@@ -589,7 +679,7 @@ async def complete_workout_task(
     db.commit()
     return Response(status_code=200, headers={"HX-Trigger": json.dumps({
         "taskUpdated": True,
-        "showUndo": {"id": log_id, "label": f"'{task_title}' completed"},
+        "showUndo": {"ids": [log_id], "label": f"'{task_title}' completed"},
     })})
 
 

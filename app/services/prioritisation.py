@@ -37,9 +37,11 @@ class PrioritisedTask:
     is_fixed: bool
     scheduled_time: datetime | None = None
     selected_exercise: str | None = None  # For workout tasks: the exercise name selected by the algorithm
+    due_today: bool = False  # Deadline whose due date is today: pinned to the top, styled as urgent
 
     def sort_key(self) -> tuple:
         return (
+            1 if self.due_today else 0,
             self.priority_score,
             self.recurrence_timescale.value,
             self.task.deferred_count or 0,
@@ -155,17 +157,28 @@ def get_flexible_tasks(db: Session, target_date: date, available_hours_per_day: 
         or_(Task.snooze_until.is_(None), Task.snooze_until <= str(target_date)),
     ).all()
     
-    now = datetime.now()
+    today = date.today()
     for task in deadlines:
-        if task.deadline_at and task.deadline_at < now:
-            continue
-        urgency = calculate_urgency_for_deadline(task, available_hours_per_day)
+        due_today = False
+        if task.deadline_at:
+            deadline_date = task.deadline_at.date()
+            if deadline_date < target_date:
+                # Already overdue — handled by the auto-complete sweep.
+                continue
+            if deadline_date == today:
+                urgency = 3
+                due_today = True
+            else:
+                urgency = calculate_urgency_for_deadline(task, available_hours_per_day)
+        else:
+            urgency = calculate_urgency_for_deadline(task, available_hours_per_day)
         flexible.append(PrioritisedTask(
             task=task,
             priority_score=calculate_priority_score(task.importance, urgency),
             calculated_urgency=urgency,
             recurrence_timescale=RecurrenceTimescale.NONE,
             is_fixed=False,
+            due_today=due_today,
         ))
     
     projections = db.query(Projection).filter(Projection.due_date == target_date).all()
@@ -410,31 +423,43 @@ def populate_workout_exercises(db: Session, scheduled: list[PrioritisedTask]) ->
             pt.selected_exercise = exercise_name
 
 
+def _schedule_for_date(
+    db: Session, target_date: date, available_hours_per_day: int
+) -> tuple[list[PrioritisedTask], list[PrioritisedTask], list[PrioritisedTask]]:
+    """
+    Compute fixed tasks, flexible tasks, and the final scheduled order for target_date.
+
+    Deadlines due today (due_today=True) are pulled out of the normal gap-based
+    scheduling and pinned to the front of the result, regardless of capacity.
+    """
+    fixed = get_fixed_tasks(db, target_date)
+    flexible = get_flexible_tasks(db, target_date, available_hours_per_day)
+
+    due_today = [pt for pt in flexible if pt.due_today]
+    other_flexible = [pt for pt in flexible if not pt.due_today]
+
+    scheduled = due_today + schedule_tasks_into_timeline(fixed, other_flexible, target_date)
+    populate_workout_exercises(db, scheduled)
+    return fixed, flexible, scheduled
+
+
 def get_prioritised_tasks(db: Session, target_date: date, available_hours_per_day: int = 6) -> list[Task]:
     """
     Get all tasks for the target date, scheduled into the timeline.
     """
-    fixed = get_fixed_tasks(db, target_date)
-    flexible = get_flexible_tasks(db, target_date, available_hours_per_day)
-    
-    scheduled = schedule_tasks_into_timeline(fixed, flexible, target_date)
-    populate_workout_exercises(db, scheduled)
+    _, _, scheduled = _schedule_for_date(db, target_date, available_hours_per_day)
     return [pt.task for pt in scheduled]
 
 
 def get_prioritised_tasks_with_metadata(
-    db: Session, 
-    target_date: date, 
+    db: Session,
+    target_date: date,
     available_hours_per_day: int = 6
 ) -> tuple[list[PrioritisedTask], dict]:
     """
     Get all tasks for the target date with full metadata.
     """
-    fixed = get_fixed_tasks(db, target_date)
-    flexible = get_flexible_tasks(db, target_date, available_hours_per_day)
-    
-    scheduled = schedule_tasks_into_timeline(fixed, flexible, target_date)
-    populate_workout_exercises(db, scheduled)
+    fixed, flexible, scheduled = _schedule_for_date(db, target_date, available_hours_per_day)
     gaps = calculate_gaps(fixed, target_date, include_afternoon=True)
     
     main_start = datetime.combine(target_date, time(settings.main_window_start))

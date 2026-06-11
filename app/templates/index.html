@@ -3,14 +3,14 @@
 {% block content %}
 <div class="focus-layout">
     <section class="current-task-focus">
-        <div id="current-task-card" hx-get="/tasks/current" hx-trigger="load, taskUpdated from:body" hx-swap="innerHTML">
+        <div id="current-task-card" hx-get="/tasks/current" hx-trigger="load, taskUpdated from:body" hx-swap="innerHTML" hx-on::after-request="handleUndoHeader(event.detail.xhr)">
             <p class="loading">Loading...</p>
         </div>
     </section>
 
     <section class="upcoming-tasks">
         <h2 class="upcoming-header">Up Next</h2>
-        <div id="task-list" class="task-stack" hx-get="/tasks/upcoming" hx-trigger="load, taskUpdated from:body" hx-swap="innerHTML">
+        <div id="task-list" class="task-stack" hx-get="/tasks/upcoming" hx-trigger="load, taskUpdated from:body" hx-swap="innerHTML" hx-on::after-request="handleUndoHeader(event.detail.xhr)">
             <p class="loading">Loading tasks...</p>
         </div>
     </section>

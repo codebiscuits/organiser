@@ -185,6 +185,7 @@ A fixed-time commitment.
 - **Scheduling:** Fixed — placed at exact `scheduled_at` time, other tasks scheduled around it
 - **Auto-prep task:** When `prep_duration` is set, a "Getting ready for: ..." task is automatically created at `scheduled_at - prep_duration`
 - **Completion:** Removed from tasks table; recorded in `completed_tasks`
+- **Overdue:** Once `scheduled_at` falls before today, it's auto-completed by the overdue sweep (see [Overdue Handling & Undo](#overdue-handling--undo))
 - **Notes:** Can be placed in evening window (work shifts) via manual scheduling
 
 ### 2. Deadline
@@ -193,7 +194,9 @@ A task with a firm due date and time.
 - **Key fields:** `deadline_at` (datetime), `estimated_duration`
 - **Urgency:** Calculated dynamically — see Priority Calculation below
 - **Scheduling:** Flexible — fitted into gaps by priority
+- **Due today:** A deadline due today is pinned to the top of the schedule (red styling, urgency 3) instead of being fitted into a gap — see [Overdue Handling & Undo](#overdue-handling--undo)
 - **Completion:** Removed from tasks table; recorded in `completed_tasks`
+- **Overdue:** Once the due date is in the past, it's auto-completed by the overdue sweep
 
 ### 3. Recurring Task
 A task that repeats on a schedule.
@@ -278,6 +281,10 @@ buffer < 2 days  → urgency 3
 
 If the target date is today, gaps start from `now` rather than 9am.
 
+### Due-Today Deadline Pinning
+
+Deadlines whose `deadline_at` date is today are flagged `due_today=True`, given urgency 3, and pulled out of normal gap-scheduling entirely — they're prepended to the front of the schedule regardless of capacity. If multiple deadlines are due today, they're sorted among themselves by priority score (then deferred count); only the top one becomes the big "current task" focus card, the rest appear red-styled at the top of "Up Next". A due-today deadline stays pinned for the whole day until completed or deferred — see [Overdue Handling & Undo](#overdue-handling--undo).
+
 ---
 
 ## Views
@@ -285,8 +292,10 @@ If the target date is today, gaps start from `now` rather than 9am.
 ### Main View (`/`)
 - **Current task:** Largest card at top — the highest-priority scheduled task for now
 - **Up Next:** Scrollable list of remaining tasks in schedule order
+- **Due-today deadlines:** Pinned to the top (red styling) until completed or deferred
 - **Add task:** Floating `+` button opens creation modal
 - Auto-refreshes on `taskUpdated` HTMX event (fired after complete/defer/delete)
+- On load, runs the overdue auto-complete sweep — see [Overdue Handling & Undo](#overdue-handling--undo)
 
 ### Timeline View (`/tasks/timeline`)
 - Visual day timeline from 9am–11pm
@@ -309,9 +318,49 @@ If the target date is today, gaps start from `now` rather than 9am.
 - **Exercises** (`/admin/exercises`) — manage exercise library
 - **Muscle Groups** (`/admin/muscle-groups`) — manage muscle groups + recovery times
 - **User Preferences** (`/admin/user`) — email, available hours per day
-- **Completed Tasks** (`/admin/completed-tasks`) — paginated history with date filters
+- **Completed Tasks** (`/admin/completed-tasks`) — paginated history with date filters; auto-completed (overdue sweep) entries are marked with an "Auto" badge
 - **Workout History** (`/admin/workout-history`) — performed sets, editable, grouped by day
 - **Refresh Projections** — regenerates all future projection entries (use if recurrence rules change)
+
+---
+
+## Overdue Handling & Undo
+
+Appointments and deadlines used to silently disappear from the live list once their time/date passed, leaving stale `pending` rows behind forever. Two mechanisms now handle this:
+
+### Due-Today Pinning (Deadlines)
+A deadline whose `deadline_at` date is today is flagged `due_today=True`:
+- Urgency forced to 3, pulled out of gap-scheduling, prepended to the front of the schedule
+- Styled red (`.task-card-focus--due-today` / `.task-card-mini--due-today`)
+- Stays pinned for the entire day regardless of capacity, until completed or deferred
+- If several deadlines are due today, they're sorted among themselves by priority — only the highest becomes the focus card, the rest show as red mini-cards at the top of "Up Next"
+
+### Auto-Complete Sweep (Overdue)
+On every load of `/`, `/tasks/current`, `/tasks/upcoming`, or `/tasks/timeline`, `auto_complete_overdue_tasks()` runs:
+- **Appointments** with `scheduled_at.date() < today` → auto-completed
+- **Deadlines** with `deadline_at.date() < today` (i.e. the day *after* their "due today" red day) → auto-completed
+- Errands are untouched (no date field, never silently overdue)
+
+Each swept task is snapshotted into `completed_tasks` (with `auto_completed=True`) and `action_log`, then deleted from `tasks`.
+
+### Toast + Undo
+If the sweep removes anything, the response carries an `HX-Trigger: showUndo` header with a combined label (`"'X' auto-completed (overdue)"` or `"{N} tasks auto-completed (overdue)"`) and the list of `action_log` ids. The toast's single Undo button posts to `/undo/{id}` (single) or `/undo/batch/{id1,id2,...}` (multiple).
+
+Undoing an **auto-completed** item gives it a "second chance": its `scheduled_at`/`deadline_at` is bumped to today, so it reappears (pinned/due-today for deadlines) instead of being swept again immediately.
+
+### action_log Table
+Generic undo log for complete/defer/edit/delete actions, pruned after 30 minutes:
+
+| Column | Description |
+|--------|-------------|
+| `action_type` | `complete` \| `defer` \| `edit` \| `delete` |
+| `task_id`, `task_title` | Identify the affected task |
+| `task_snapshot` | JSON dump of the task row before the action |
+| `projections_snapshot` | JSON list of projection due-dates before the action |
+| `completed_task_id` | FK to `completed_tasks`, set for `complete` actions |
+| `recurrence_snapshot` | JSON dump of the recurrence row, set for `delete` actions |
+| `performed_set_id` | FK to `performed_sets`, set for workout completions |
+| `performed_at` | Used for the 30-minute pruning cutoff |
 
 ---
 
@@ -344,6 +393,13 @@ All endpoints return HTML fragments (HTMX) unless noted as JSON.
 | GET | `/tasks/{id}/complete/workout` | HTML | Workout completion form |
 | POST | `/tasks/{id}/complete/workout` | HTML (204) | Save workout completion |
 | POST | `/tasks/{id}/defer` | HTML (204) | Defer to tomorrow |
+
+### Undo (`/undo`)
+
+| Method | Path | Returns | Description |
+|--------|------|---------|-------------|
+| POST | `/undo/{log_id}` | 200, `HX-Trigger: taskUpdated` | Undo a single `action_log` entry |
+| POST | `/undo/batch/{id1,id2,...}` | 200, `HX-Trigger: taskUpdated` | Undo multiple `action_log` entries at once (e.g. an overdue sweep) |
 
 ### Create Task — JSON body example
 
@@ -457,7 +513,7 @@ The following are stubbed or partially implemented:
 uv run pytest
 ```
 
-Tests cover the prioritisation service, recurrence logic, workout algorithm, and API routes (181 tests).
+Tests cover the prioritisation service, recurrence logic, workout algorithm, and API routes (191 tests).
 
 ---
 

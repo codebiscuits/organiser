@@ -136,6 +136,19 @@ main {
     box-shadow: 0 8px 32px rgba(46, 229, 157, 0.15);
 }
 
+.task-card-focus--due-today {
+    border-color: var(--danger);
+    box-shadow: 0 8px 32px rgba(229, 72, 77, 0.15);
+}
+
+.task-card-focus--due-today .focus-title {
+    color: var(--danger);
+}
+
+[data-theme="dark"] .task-card-focus--due-today {
+    box-shadow: 0 4px 16px rgba(240, 82, 79, 0.08);
+}
+
 .focus-title {
     font-size: 1.75rem;
     font-weight: 600;
@@ -260,6 +273,16 @@ main {
 
 .task-card-mini:hover {
     opacity: 1;
+}
+
+.task-card-mini--due-today {
+    opacity: 1;
+    border-left: 3px solid var(--danger);
+}
+
+.task-card-mini--due-today .mini-title {
+    color: var(--danger);
+    font-weight: 600;
 }
 
 .mini-header {
@@ -1338,6 +1361,12 @@ main {
     background: var(--bg-secondary);
     border-radius: 4px;
     font-size: 0.75rem;
+}
+
+.badge-auto {
+    margin-left: 0.5rem;
+    background: var(--danger);
+    color: white;
 }
 
 /* Undo toast */

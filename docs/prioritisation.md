@@ -28,7 +28,9 @@ Each task is scored as `importance × urgency` (both 1-3 scale):
 - Appointments are always "fixed" tasks placed at their exact time
 
 ### Deadlines
-Calculated dynamically based on buffer time:
+If the deadline's date is **today**, urgency is forced to 3 and the task is pinned (see "Due-Today Pinning" below) instead of using the buffer calculation.
+
+Otherwise, urgency is calculated dynamically based on buffer time:
 
 ```
 available_hours_per_day = 6 (configurable)
@@ -41,6 +43,8 @@ Urgency mapping:
 - buffer 2-7 days → urgency = 2  
 - buffer < 2 days → urgency = 3
 ```
+
+A deadline whose date is **before** today is excluded from `get_flexible_tasks` entirely — it's handled by the overdue auto-complete sweep instead (see `docs/task_completion.md`).
 
 ### Other Tasks
 Manually set at creation time.
@@ -84,9 +88,24 @@ For each gap between fixed tasks:
 ### Step 4: Sort Flexible Tasks
 
 Flexible tasks (deadlines, errands, non-time-bound recurring) are sorted by:
-1. Priority score (highest first)
-2. Recurrence timescale (monthly > weekly > daily)
-3. Deferred count (higher first)
+1. **Due today** (deadlines due today first — see "Due-Today Pinning" below)
+2. Priority score (highest first)
+3. Recurrence timescale (monthly > weekly > daily)
+4. Deferred count (higher first)
+
+## Due-Today Pinning
+
+Deadlines due today are *not* fitted into a gap at all. `_schedule_for_date()` splits the sorted flexible list into `due_today` and `other_flexible`, runs the normal timeline algorithm (steps 5-6) on `other_flexible` only, then prepends the `due_today` tasks to the front of the result:
+
+```
+scheduled = due_today + schedule_tasks_into_timeline(fixed, other_flexible, target_date)
+```
+
+Effects:
+- A due-today deadline always appears, regardless of how full today's schedule is (it doesn't count against gap capacity)
+- It's always `scheduled[0]` unless another due-today deadline has higher priority
+- If multiple deadlines are due today, they keep their relative priority order from Step 4 (highest first)
+- It's styled red in the UI and stays pinned until completed or deferred — once the date rolls over, it's picked up by the overdue auto-complete sweep instead (`docs/task_completion.md`)
 
 ### Step 5: Handle Manually Scheduled Tasks
 

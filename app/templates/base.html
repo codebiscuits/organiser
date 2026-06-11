@@ -50,9 +50,11 @@
     
     <script src="/static/js/app.js"></script>
     <script>
-        function showUndoToast(logId, label) {
+        function showUndoToast(logIds, label) {
             document.getElementById('undo-toast')?.remove();
             clearTimeout(window._undoTimer);
+
+            if (!Array.isArray(logIds)) logIds = [logIds];
 
             const toast = document.createElement('div');
             toast.id = 'undo-toast';
@@ -64,7 +66,8 @@
             const undoBtn = document.createElement('button');
             undoBtn.className = 'undo-toast-btn';
             undoBtn.textContent = 'Undo';
-            undoBtn.setAttribute('hx-post', '/undo/' + logId);
+            const undoUrl = logIds.length === 1 ? '/undo/' + logIds[0] : '/undo/batch/' + logIds.join(',');
+            undoBtn.setAttribute('hx-post', undoUrl);
             undoBtn.setAttribute('hx-swap', 'none');
 
             const closeBtn = document.createElement('button');
@@ -97,13 +100,13 @@
                 var h = xhr && xhr.getResponseHeader('HX-Trigger');
                 if (!h) return;
                 var t = JSON.parse(h);
-                if (t.showUndo) showUndoToast(t.showUndo.id, t.showUndo.label);
+                if (t.showUndo) showUndoToast(t.showUndo.ids, t.showUndo.label);
             } catch(e) {}
         }
 
         // Fallback for modal-based completions (variable/workout) that can't use hx-on
         document.body.addEventListener('showUndo', function(evt) {
-            showUndoToast(evt.detail.id, evt.detail.label);
+            showUndoToast(evt.detail.ids, evt.detail.label);
         });
     </script>
     {% if 'serviceWorker' in request.headers.get('User-Agent', '') %}
