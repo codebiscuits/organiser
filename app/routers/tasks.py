@@ -180,6 +180,35 @@ async def get_all_tasks(db: Session = Depends(get_db)):
     return tasks
 
 
+@router.get("/today")
+async def get_today_tasks(db: Session = Depends(get_db)):
+    """Get today's prioritised and scheduled task list as JSON."""
+    _auto_complete_trigger(db)
+    scheduled, capacity = get_prioritised_tasks_with_metadata(db, date.today())
+    tasks = []
+    for pt in scheduled:
+        tasks.append({
+            "id": pt.task.id,
+            "type": pt.task.type,
+            "title": pt.task.title,
+            "notes": pt.task.notes,
+            "estimated_duration": pt.task.estimated_duration,
+            "importance": pt.task.importance,
+            "urgency": pt.task.urgency,
+            "calculated_urgency": pt.calculated_urgency,
+            "priority_score": pt.priority_score,
+            "is_fixed": pt.is_fixed,
+            "scheduled_time": pt.scheduled_time.isoformat() if pt.scheduled_time else None,
+            "due_today": pt.due_today,
+            "selected_exercise": pt.selected_exercise,
+            "deadline_at": pt.task.deadline_at.isoformat() if pt.task.deadline_at else None,
+            "scheduled_at": pt.task.scheduled_at.isoformat() if pt.task.scheduled_at else None,
+            "location": pt.task.location,
+            "allow_afternoon": pt.task.allow_afternoon,
+        })
+    return {"tasks": tasks, "capacity": capacity}
+
+
 @router.get("/timeline", response_class=HTMLResponse)
 async def timeline_view(request: Request, db: Session = Depends(get_db)):
     """
