@@ -334,6 +334,82 @@ class TestDeleteTask:
 
 
 # ---------------------------------------------------------------------------
+# Recurring task delete modal / delete-instance
+# ---------------------------------------------------------------------------
+
+class TestDeleteInstance:
+    def _task_with_todays_projection(self, client, db):
+        data = create_task(client, RECURRING_PAYLOAD)
+        task_id = data["id"]
+        db.add(Projection(task_id=task_id, due_date=date.today()))
+        db.commit()
+        return task_id
+
+    def test_delete_instance_removes_only_todays_projection(self, client, db):
+        task_id = self._task_with_todays_projection(client, db)
+
+        total_before = db.query(Projection).filter(Projection.task_id == task_id).count()
+        assert total_before > 1
+
+        resp = client.post(f"/tasks/{task_id}/delete-instance")
+        assert resp.status_code == 200
+
+        remaining = db.query(Projection).filter(Projection.task_id == task_id).count()
+        assert remaining == total_before - 1
+        assert db.query(Task).filter(Task.id == task_id).first() is not None
+
+    def test_delete_instance_returns_undo_trigger(self, client, db):
+        task_id = self._task_with_todays_projection(client, db)
+
+        resp = client.post(f"/tasks/{task_id}/delete-instance")
+        assert "showUndo" in resp.headers.get("hx-trigger", "")
+
+    def test_delete_instance_writes_action_log(self, client, db):
+        from app.models.action_log import ActionLog
+        task_id = self._task_with_todays_projection(client, db)
+
+        client.post(f"/tasks/{task_id}/delete-instance")
+
+        log = db.query(ActionLog).filter(
+            ActionLog.task_id == task_id,
+            ActionLog.action_type == "delete_instance",
+        ).first()
+        assert log is not None
+        assert date.today().isoformat() in log.projections_snapshot
+
+    def test_undo_delete_instance_restores_projection(self, client, db):
+        from app.models.action_log import ActionLog
+        task_id = self._task_with_todays_projection(client, db)
+
+        total_before = db.query(Projection).filter(Projection.task_id == task_id).count()
+        client.post(f"/tasks/{task_id}/delete-instance")
+
+        log = db.query(ActionLog).filter(
+            ActionLog.task_id == task_id,
+            ActionLog.action_type == "delete_instance",
+        ).first()
+        client.post(f"/undo/{log.id}")
+
+        assert db.query(Projection).filter(Projection.task_id == task_id).count() == total_before
+
+    def test_delete_confirm_modal_returns_html(self, client, db):
+        data = create_task(client, RECURRING_PAYLOAD)
+        task_id = data["id"]
+
+        resp = client.get(f"/tasks/{task_id}/delete-confirm")
+        assert resp.status_code == 200
+        assert "delete-confirm-modal" in resp.text
+        assert "delete-instance" in resp.text
+
+    def test_delete_instance_no_projection_returns_404(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+
+        resp = client.post(f"/tasks/{task_id}/delete-instance")
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # Variable recurring completion
 # ---------------------------------------------------------------------------
 

@@ -759,6 +759,52 @@ async def defer_task(request: Request, task_id: str, db: Session = Depends(get_d
     return Response(status_code=200, headers={"HX-Trigger": _undo_trigger(log_id, f"'{task_title}' deferred")})
 
 
+@router.get("/{task_id}/delete-confirm", response_class=HTMLResponse)
+async def delete_confirm_modal(request: Request, task_id: str, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return templates.TemplateResponse(
+        request,
+        "components/delete_confirm_modal.html",
+        {"task": task},
+    )
+
+
+@router.post("/{task_id}/delete-instance")
+async def delete_task_instance(task_id: str, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    today = date.today()
+    deleted = db.query(Projection).filter(
+        Projection.task_id == task_id,
+        Projection.due_date == today,
+    ).delete()
+
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail="No projection for today")
+
+    task_title = task.title
+    log = ActionLog(
+        action_type="delete_instance",
+        task_id=task_id,
+        task_title=task_title,
+        projections_snapshot=json.dumps([today.isoformat()]),
+    )
+    db.add(log)
+    _prune_old_logs(db)
+    db.flush()
+    log_id = log.id
+
+    db.commit()
+    return Response(
+        status_code=200,
+        headers={"HX-Trigger": _undo_trigger(log_id, f"'{task_title}' skipped today")},
+    )
+
+
 @router.delete("/{task_id}", response_class=HTMLResponse)
 async def delete_task(request: Request, task_id: str, db: Session = Depends(get_db)):
     """

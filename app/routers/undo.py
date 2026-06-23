@@ -29,6 +29,8 @@ async def undo_action(log_id: int, db: Session = Depends(get_db)):
         _undo_edit(log, db)
     elif log.action_type == "delete":
         _undo_delete(log, db)
+    elif log.action_type == "delete_instance":
+        _undo_delete_instance(log, db)
 
     db.delete(log)
     db.commit()
@@ -54,6 +56,8 @@ async def undo_batch(ids: str, db: Session = Depends(get_db)):
             _undo_edit(log, db)
         elif log.action_type == "delete":
             _undo_delete(log, db)
+        elif log.action_type == "delete_instance":
+            _undo_delete_instance(log, db)
 
         db.delete(log)
 
@@ -114,6 +118,17 @@ def _undo_edit(log, db):
     if not task:
         return
     apply_task_dict(task, json.loads(log.task_snapshot))
+
+
+def _undo_delete_instance(log, db):
+    for due_date_str in json.loads(log.projections_snapshot or "[]"):
+        d = date.fromisoformat(due_date_str)
+        exists = db.query(Projection).filter(
+            Projection.task_id == log.task_id,
+            Projection.due_date == d,
+        ).first()
+        if not exists:
+            db.add(Projection(task_id=log.task_id, due_date=d))
 
 
 def _undo_delete(log, db):

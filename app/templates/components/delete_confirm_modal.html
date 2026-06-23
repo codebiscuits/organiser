@@ -1,0 +1,22 @@
+<div class="modal-overlay" id="delete-confirm-modal" onclick="if(event.target===this)this.remove()">
+    <div class="modal-content">
+        <h2>Delete task</h2>
+        <p class="modal-task-title">{{ task.title }}</p>
+        <p class="modal-description">Remove just today, or delete this task permanently?</p>
+        <div class="form-actions">
+            <button
+                class="btn-save"
+                hx-post="/tasks/{{ task.id }}/delete-instance"
+                hx-swap="none"
+                hx-on::after-request="htmx.trigger(document.body, 'taskUpdated'); handleUndoHeader(event.detail.xhr); this.closest('.modal-overlay').remove()"
+            >Delete today only</button>
+            <button
+                class="btn-delete"
+                hx-delete="/tasks/{{ task.id }}"
+                hx-swap="none"
+                hx-on::after-request="htmx.trigger(document.body, 'taskUpdated'); handleUndoHeader(event.detail.xhr); this.closest('.modal-overlay').remove()"
+            >Delete task entirely</button>
+            <button type="button" class="btn-cancel" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+        </div>
+    </div>
+</div>
