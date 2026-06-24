@@ -42,44 +42,19 @@ Any gotchas, design decisions made during discussion, or things to watch out for
 
 ## Ready
 
-### Task tagging and categorisation
-**Status:** ready
-**Added:** 2026-06-23
-
-**Description:**
-Add a tag system so tasks can be visually categorised. Tags are pre-defined (name + icon + color) and managed in the admin panel. Tasks can have any number of tags. In the daily view, tagged tasks display a colored left border stripe and small Lucide icon(s) so related tasks are immediately recognisable at a glance. No changes to the scheduling algorithm.
-
-**Acceptance criteria:**
-- [ ] `tags` table: `id`, `name`, `icon` (Lucide icon name string), `color` (hex from approved palette)
-- [ ] `task_tags` join table: `task_id`, `tag_id`, cascade delete on either side
-- [ ] Admin panel: tag list page showing all tags with their icon and color swatch
-- [ ] Admin panel: create/edit tag form — name field, color picker (8 swatches, radio buttons), icon field (text input for Lucide icon name with a live preview rendering the icon)
-- [ ] Admin panel: delete tag (with confirmation if tag is in use; cascade removes task_tag rows)
-- [ ] Task create form: optional multi-select tag picker showing tag name + color swatch for each option
-- [ ] Task edit form: same multi-select tag picker, pre-populated with existing tags
-- [ ] Daily view task cards: colored left border stripe using the tag's color; if multiple tags, use the first tag's color for the stripe
-- [ ] Daily view task cards: small Lucide icon for each tag rendered inline on the card
-- [ ] Lucide icon library loaded via CDN (`https://unpkg.com/lucide@latest`) in base.html; icons rendered with `lucide.createIcons()`
-- [ ] All existing tests continue to pass; new tests cover tag CRUD and task-tag association endpoints
-
-**Notes / constraints:**
-- Approved color palette (store as hex): dusty blue `#7eb8d4`, sage green `#8fbe8f`, warm terracotta `#d4856a`, soft lavender `#a89fd4`, amber `#d4b86a`, rose `#d48fa0`, steel teal `#6ab4b4`, slate violet `#8f9fd4`
-- Icon name is a free-text string matching a valid Lucide icon (e.g. `home`, `briefcase`, `dumbbell`). No validation needed beyond showing the preview — if the icon name is invalid, Lucide silently skips it.
-- If a task has multiple tags, left border uses the first tag's color; all tag icons are shown side by side
-- Scheduling algorithm and task ordering are untouched
-- Admin tag list should be reachable from the existing `/admin` dashboard
-
 ---
 
 ## In Progress
 
-### Task tagging and categorisation
-**Status:** in-progress
-**Added:** 2026-06-23
+<!-- Claude is currently working on these -->
 
 ---
 
 ## Done
+
+### Task tagging and categorisation
+**Status:** done
+**Added:** 2026-06-23
 
 ### Recurring task delete modal
 **Status:** done
