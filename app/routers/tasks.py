@@ -10,6 +10,7 @@ from app.database import get_db
 from app.models.task import Task, CompletedTask
 from app.models.recurrence import Recurrence, Projection
 from app.models.action_log import ActionLog
+from app.models.tag import Tag, TaskTag
 from app.services.undo import task_to_dict, recurrence_to_dict, projections_to_list
 from app.schemas.task import (
     TaskCreate,
@@ -168,9 +169,10 @@ async def upcoming_tasks(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/new", response_class=HTMLResponse)
-async def new_task_form(request: Request):
+async def new_task_form(request: Request, db: Session = Depends(get_db)):
     """Return the task creation form modal."""
-    return templates.TemplateResponse(request, "components/task_form.html")
+    tags = db.query(Tag).order_by(Tag.name).all()
+    return templates.TemplateResponse(request, "components/task_form.html", {"tags": tags})
 
 
 @router.get("/all", response_model=list[TaskResponse])
@@ -434,6 +436,9 @@ async def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
 
         start = recurrence.start_date or date.today()
         db.add(Projection(task_id=task.id, due_date=start))
+
+    for tag_id in task_data.tag_ids:
+        db.add(TaskTag(task_id=task.id, tag_id=tag_id))
 
     if task_data.type == "appointment" and task_data.prep_duration and task_data.scheduled_at:
         prep_task = Task(
@@ -852,13 +857,15 @@ async def edit_task_form(request: Request, task_id: str, db: Session = Depends(g
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    
+
     recurrence = db.query(Recurrence).filter(Recurrence.task_id == task_id).first()
-    
+    tags = db.query(Tag).order_by(Tag.name).all()
+    task_tag_ids = [tt.tag_id for tt in db.query(TaskTag).filter(TaskTag.task_id == task_id).all()]
+
     return templates.TemplateResponse(
         request,
         "components/task_edit_form.html",
-        {"task": task, "recurrence": recurrence},
+        {"task": task, "recurrence": recurrence, "tags": tags, "task_tag_ids": task_tag_ids},
     )
 
 
@@ -900,6 +907,10 @@ async def update_task(task_id: str, task_data: TaskUpdate, response: Response, d
         task.allowed_days = task_data.allowed_days
     if task_data.preset_id is not None:
         task.preset_id = task_data.preset_id
+    if task_data.tag_ids is not None:
+        db.query(TaskTag).filter(TaskTag.task_id == task_id).delete()
+        for tag_id in task_data.tag_ids:
+            db.add(TaskTag(task_id=task_id, tag_id=tag_id))
 
     if task_data.recurrence:
         existing_recurrence = db.query(Recurrence).filter(Recurrence.task_id == task_id).first()

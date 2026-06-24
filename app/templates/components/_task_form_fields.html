@@ -206,6 +206,31 @@ Optional:
     </div>
 </template>
 
+<!-- Tags -->
+{% if tags is defined and tags %}
+<div class="form-group">
+    <label>Tags</label>
+    <div class="tag-picker-grid">
+        {% for tag in tags %}
+        <label class="tag-picker-option">
+            <input type="checkbox"
+                   value="{{ tag.id }}"
+                   {% if useFormNames %}
+                   name="tag_ids"
+                   {% else %}
+                   x-model="selectedTagIds"
+                   {% endif %}>
+            <span class="tag-picker-label">
+                <span class="tag-picker-swatch" style="background-color: {{ tag.color }}"></span>
+                <i data-lucide="{{ tag.icon }}" class="tag-picker-icon"></i>
+                <span>{{ tag.name }}</span>
+            </span>
+        </label>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
 <!-- Notes (all types) -->
 <div class="form-group">
     <label for="notes">Notes (optional)</label>

@@ -1394,3 +1394,140 @@ class TestAutoCompleteOverdueSweep:
         assert restored is not None
         assert restored.deadline_at.date() == date.today()
         assert db.query(CompletedTask).filter(CompletedTask.task_id == task_id).first() is None
+
+
+# ---------------------------------------------------------------------------
+# Tag CRUD and task-tag associations
+# ---------------------------------------------------------------------------
+
+from app.models.tag import Tag, TaskTag
+
+TAG_PAYLOAD = {"name": "Work", "icon": "briefcase", "color": "#7eb8d4"}
+TAG_PAYLOAD_2 = {"name": "Health", "icon": "dumbbell", "color": "#8fbe8f"}
+
+
+def create_tag(client, payload: dict) -> dict:
+    resp = client.post("/admin/tags", data=payload)
+    assert resp.status_code in (200, 303), resp.text
+    # Follow redirect to get JSON; instead query DB directly in tests
+    # Return the last created tag via GET
+    resp2 = client.get("/admin/tags")
+    assert resp2.status_code == 200
+    return None  # Tags are returned via HTML; use DB queries in tests
+
+
+class TestTagCRUD:
+    def test_create_tag(self, client, db):
+        resp = client.post("/admin/tags", data=TAG_PAYLOAD)
+        assert resp.status_code in (200, 303)
+        tag = db.query(Tag).filter(Tag.name == "Work").first()
+        assert tag is not None
+        assert tag.icon == "briefcase"
+        assert tag.color == "#7eb8d4"
+
+    def test_update_tag(self, client, db):
+        client.post("/admin/tags", data=TAG_PAYLOAD)
+        tag = db.query(Tag).first()
+        resp = client.post(f"/admin/tags/{tag.id}", data={"name": "Career", "icon": "building", "color": "#d4856a"})
+        assert resp.status_code in (200, 303)
+        db.refresh(tag)
+        assert tag.name == "Career"
+        assert tag.icon == "building"
+        assert tag.color == "#d4856a"
+
+    def test_delete_tag(self, client, db):
+        client.post("/admin/tags", data=TAG_PAYLOAD)
+        tag = db.query(Tag).first()
+        tag_id = tag.id
+        resp = client.delete(f"/admin/tags/{tag_id}")
+        assert resp.status_code == 200
+        assert db.query(Tag).filter(Tag.id == tag_id).first() is None
+
+    def test_delete_tag_removes_task_tag_rows(self, client, db):
+        client.post("/admin/tags", data=TAG_PAYLOAD)
+        tag = db.query(Tag).first()
+
+        task_data = {**ERRAND_PAYLOAD, "tag_ids": [tag.id]}
+        task = create_task(client, task_data)
+        task_id = task["id"]
+
+        assert db.query(TaskTag).filter(TaskTag.task_id == task_id).count() == 1
+
+        client.delete(f"/admin/tags/{tag.id}")
+        assert db.query(TaskTag).filter(TaskTag.task_id == task_id).count() == 0
+
+    def test_delete_nonexistent_tag_returns_404(self, client, db):
+        resp = client.delete("/admin/tags/9999")
+        assert resp.status_code == 404
+
+
+class TestTaskTagAssociation:
+    def test_create_task_with_tags(self, client, db):
+        client.post("/admin/tags", data=TAG_PAYLOAD)
+        tag = db.query(Tag).first()
+
+        task_data = {**ERRAND_PAYLOAD, "tag_ids": [tag.id]}
+        task = create_task(client, task_data)
+
+        associations = db.query(TaskTag).filter(TaskTag.task_id == task["id"]).all()
+        assert len(associations) == 1
+        assert associations[0].tag_id == tag.id
+
+    def test_create_task_with_multiple_tags(self, client, db):
+        client.post("/admin/tags", data=TAG_PAYLOAD)
+        client.post("/admin/tags", data=TAG_PAYLOAD_2)
+        tags = db.query(Tag).all()
+        assert len(tags) == 2
+
+        tag_ids = [t.id for t in tags]
+        task_data = {**ERRAND_PAYLOAD, "tag_ids": tag_ids}
+        task = create_task(client, task_data)
+
+        associations = db.query(TaskTag).filter(TaskTag.task_id == task["id"]).all()
+        assert len(associations) == 2
+
+    def test_create_task_without_tags(self, client, db):
+        task = create_task(client, ERRAND_PAYLOAD)
+        associations = db.query(TaskTag).filter(TaskTag.task_id == task["id"]).all()
+        assert len(associations) == 0
+
+    def test_update_task_replaces_tags(self, client, db):
+        client.post("/admin/tags", data=TAG_PAYLOAD)
+        client.post("/admin/tags", data=TAG_PAYLOAD_2)
+        tags = db.query(Tag).all()
+        tag1, tag2 = tags[0], tags[1]
+
+        task = create_task(client, {**ERRAND_PAYLOAD, "tag_ids": [tag1.id]})
+        task_id = task["id"]
+
+        resp = client.put(f"/tasks/{task_id}", json={"tag_ids": [tag2.id]})
+        assert resp.status_code == 200
+
+        associations = db.query(TaskTag).filter(TaskTag.task_id == task_id).all()
+        assert len(associations) == 1
+        assert associations[0].tag_id == tag2.id
+
+    def test_update_task_clears_tags_with_empty_list(self, client, db):
+        client.post("/admin/tags", data=TAG_PAYLOAD)
+        tag = db.query(Tag).first()
+
+        task = create_task(client, {**ERRAND_PAYLOAD, "tag_ids": [tag.id]})
+        task_id = task["id"]
+
+        resp = client.put(f"/tasks/{task_id}", json={"tag_ids": []})
+        assert resp.status_code == 200
+
+        assert db.query(TaskTag).filter(TaskTag.task_id == task_id).count() == 0
+
+    def test_update_task_without_tag_ids_preserves_tags(self, client, db):
+        client.post("/admin/tags", data=TAG_PAYLOAD)
+        tag = db.query(Tag).first()
+
+        task = create_task(client, {**ERRAND_PAYLOAD, "tag_ids": [tag.id]})
+        task_id = task["id"]
+
+        # Update title only — no tag_ids in payload
+        resp = client.put(f"/tasks/{task_id}", json={"title": "Updated title"})
+        assert resp.status_code == 200
+
+        assert db.query(TaskTag).filter(TaskTag.task_id == task_id).count() == 1

@@ -1,4 +1,5 @@
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, Time, Text, CheckConstraint, ForeignKey
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 
@@ -29,6 +30,8 @@ class Task(Base):
     allowed_days = Column(String)  # comma-separated day indices, Sunday=0
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    tags = relationship("Tag", secondary="task_tags", lazy="select")
 
 
 class CompletedTask(Base):

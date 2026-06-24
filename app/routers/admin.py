@@ -2,7 +2,7 @@ from collections import OrderedDict
 from datetime import datetime, date, time
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Form, Query, Request, Response
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session, joinedload
@@ -15,6 +15,7 @@ from app.models.task import CompletedTask, Task
 from app.models.preset import TaskPreset
 from app.models.user import User
 from app.models.workout import Exercise, ExerciseMuscle, MuscleGroup, PerformedSet
+from app.models.tag import Tag, TaskTag
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -784,3 +785,76 @@ async def admin_update_workout_history(
         "admin/workout_history_row.html",
         {"item": performed_set, "exercise_name": exercise_name},
     )
+
+
+# ============== TAGS ==============
+
+@router.get("/tags")
+async def admin_tags_list(request: Request, db: Session = Depends(get_db)):
+    tags = db.query(Tag).order_by(Tag.name).all()
+    tag_use_counts = {
+        tag.id: db.query(TaskTag).filter(TaskTag.tag_id == tag.id).count()
+        for tag in tags
+    }
+    return templates.TemplateResponse(
+        request,
+        "admin/tags.html",
+        {"tags": tags, "tag_use_counts": tag_use_counts},
+    )
+
+
+@router.get("/tags/new")
+async def admin_tag_new(request: Request):
+    return templates.TemplateResponse(request, "admin/tag_form.html", {"tag": None})
+
+
+@router.post("/tags")
+async def admin_tag_create(
+    request: Request,
+    db: Session = Depends(get_db),
+    name: str = Form(...),
+    icon: str = Form(...),
+    color: str = Form(...),
+):
+    tag = Tag(name=name.strip(), icon=icon.strip(), color=color)
+    db.add(tag)
+    db.commit()
+    return RedirectResponse(url="/admin/tags", status_code=303)
+
+
+@router.get("/tags/{tag_id}/edit")
+async def admin_tag_edit(request: Request, tag_id: int, db: Session = Depends(get_db)):
+    tag = db.query(Tag).filter(Tag.id == tag_id).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    return templates.TemplateResponse(request, "admin/tag_form.html", {"tag": tag})
+
+
+@router.post("/tags/{tag_id}")
+async def admin_tag_update(
+    request: Request,
+    tag_id: int,
+    db: Session = Depends(get_db),
+    name: str = Form(...),
+    icon: str = Form(...),
+    color: str = Form(...),
+):
+    tag = db.query(Tag).filter(Tag.id == tag_id).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    tag.name = name.strip()
+    tag.icon = icon.strip()
+    tag.color = color
+    db.commit()
+    return RedirectResponse(url="/admin/tags", status_code=303)
+
+
+@router.delete("/tags/{tag_id}")
+async def admin_tag_delete(tag_id: int, db: Session = Depends(get_db)):
+    tag = db.query(Tag).filter(Tag.id == tag_id).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    db.query(TaskTag).filter(TaskTag.tag_id == tag_id).delete()
+    db.delete(tag)
+    db.commit()
+    return Response(content="", status_code=200)

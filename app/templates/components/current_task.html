@@ -1,5 +1,8 @@
 {% if task %}
-<article class="task-card-focus{% if task.due_today %} task-card-focus--due-today{% endif %}" data-task-id="{{ task.task.id }}" data-priority="{{ task.priority_score }}">
+<article class="task-card-focus{% if task.due_today %} task-card-focus--due-today{% endif %}"
+         data-task-id="{{ task.task.id }}"
+         data-priority="{{ task.priority_score }}"
+         {% if not task.due_today and task.task.tags %}style="border-left: 4px solid {{ task.task.tags[0].color }}"{% endif %}>
     <h1 class="focus-title">
         {% if task.task.type == 'workout' and task.selected_exercise %}
             Workout: {{ task.selected_exercise }}
@@ -14,6 +17,12 @@
         {% if task.scheduled_time %}
         <span class="task-time-badge">{{ task.scheduled_time.strftime('%H:%M') }}{% if task.is_fixed %} (fixed){% endif %}</span>
         {% endif %}
+        {% for tag in task.task.tags %}
+        <span class="focus-tag-badge" style="background-color: color-mix(in srgb, {{ tag.color }} 20%, transparent); color: {{ tag.color }}; border: 1px solid {{ tag.color }}">
+            <i data-lucide="{{ tag.icon }}" style="width:11px;height:11px"></i>
+            {{ tag.name }}
+        </span>
+        {% endfor %}
     </div>
     
     {% if task.task.type == 'deadline' and task.task.deadline_at %}

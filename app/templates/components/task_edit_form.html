@@ -2,6 +2,7 @@
     submitting: false,
     selectedDays: {{ recurrence.day_of_week.split(',') if recurrence and recurrence.day_of_week else [] | tojson }},
     allowedDays: {{ task.allowed_days.split(',') if task.allowed_days else [] | tojson }},
+    selectedTagIds: {{ task_tag_ids | map('string') | list | tojson }},
     form: {
         type: '{{ task.type }}',
         title: '{{ task.title | e }}',
@@ -42,7 +43,8 @@
             notes: this.form.notes || null,
             estimated_duration: this.form.estimated_duration,
             importance: this.form.importance,
-            allow_afternoon: this.form.allow_afternoon
+            allow_afternoon: this.form.allow_afternoon,
+            tag_ids: this.selectedTagIds.map(Number)
         };
         if (this.showUrgency()) {
             payload.urgency = this.form.urgency;

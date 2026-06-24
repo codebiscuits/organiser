@@ -1424,3 +1424,84 @@ main {
 }
 
 .undo-toast-close:hover { color: var(--text-primary); }
+
+/* ── Tag picker (task form) ──────────────────────────────────────────────── */
+
+.tag-picker-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.tag-picker-option {
+    cursor: pointer;
+}
+
+.tag-picker-option input[type="checkbox"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.tag-picker-label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+    user-select: none;
+}
+
+.tag-picker-option input[type="checkbox"]:checked + .tag-picker-label {
+    border-color: var(--text-primary);
+    color: var(--text-primary);
+    background: var(--bg-card);
+}
+
+.tag-picker-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.tag-picker-icon svg {
+    width: 12px;
+    height: 12px;
+}
+
+/* ── Tag icons in mini task cards ───────────────────────────────────────── */
+
+.mini-tag-icons {
+    display: flex;
+    gap: 2px;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.mini-tag-icons svg {
+    width: 12px;
+    height: 12px;
+}
+
+/* ── Tag badges in focus card ───────────────────────────────────────────── */
+
+.focus-tag-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.focus-tag-badge svg {
+    width: 11px;
+    height: 11px;
+}

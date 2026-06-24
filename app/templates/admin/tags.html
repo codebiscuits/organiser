@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block title %}Tags - Admin{% endblock %}
+
+{% block content %}
+<section class="admin-section">
+    <div class="section-header">
+        <h2>Tags</h2>
+        <div class="header-actions">
+            <a href="/admin" class="btn-back">← Back</a>
+            <a href="/admin/tags/new" class="btn-submit">+ New Tag</a>
+        </div>
+    </div>
+
+    <div id="tag-list" class="item-list">
+        {% for tag in tags %}
+        <div class="tag-item" id="tag-{{ tag.id }}">
+            <div class="tag-info">
+                <span class="tag-color-swatch" style="background-color: {{ tag.color }}"></span>
+                <i data-lucide="{{ tag.icon }}" class="tag-list-icon"></i>
+                <span class="item-name">{{ tag.name }}</span>
+                <span class="tag-use-count">{{ tag_use_counts[tag.id] }} task{% if tag_use_counts[tag.id] != 1 %}s{% endif %}</span>
+            </div>
+            <div class="tag-actions">
+                <a href="/admin/tags/{{ tag.id }}/edit" class="btn-edit">Edit</a>
+                <button
+                    class="btn-delete"
+                    hx-delete="/admin/tags/{{ tag.id }}"
+                    hx-target="#tag-{{ tag.id }}"
+                    hx-swap="outerHTML"
+                    hx-confirm="Delete '{{ tag.name }}'?{% if tag_use_counts[tag.id] > 0 %} It is used by {{ tag_use_counts[tag.id] }} task(s) — those tasks will be un-tagged.{% endif %}"
+                >×</button>
+            </div>
+        </div>
+        {% endfor %}
+        {% if not tags %}
+        <p class="no-items">No tags yet. Create one to get started.</p>
+        {% endif %}
+    </div>
+</section>
+
+<style>
+.admin-section { max-width: 700px; }
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+}
+
+.header-actions {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+
+.btn-back {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+
+.item-list { display: flex; flex-direction: column; gap: 0.5rem; }
+
+.tag-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+}
+
+.tag-info {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.tag-color-swatch {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.tag-list-icon svg {
+    width: 16px;
+    height: 16px;
+    color: var(--text-secondary);
+}
+
+.item-name {
+    font-size: 0.95rem;
+    color: var(--text-primary);
+}
+
+.tag-use-count {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.tag-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.btn-edit {
+    padding: 0.25rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: none;
+    color: var(--text-primary);
+    text-decoration: none;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.btn-edit:hover { background: var(--bg-card); }
+
+.btn-delete {
+    padding: 0.25rem 0.5rem;
+    border: none;
+    border-radius: 4px;
+    background: none;
+    color: var(--danger);
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+.btn-delete:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+
+.no-items { color: var(--text-secondary); font-size: 0.9rem; }
+</style>
+{% endblock %}

@@ -5,7 +5,9 @@
 {% endif %}
 {% if tasks %}
     {% for pt in tasks %}
-    <article class="task-card-mini{% if pt.due_today %} task-card-mini--due-today{% endif %}" data-task-id="{{ pt.task.id }}">
+    <article class="task-card-mini{% if pt.due_today %} task-card-mini--due-today{% endif %}"
+             data-task-id="{{ pt.task.id }}"
+             {% if not pt.due_today and pt.task.tags %}style="border-left: 3px solid {{ pt.task.tags[0].color }}"{% endif %}>
         <div class="mini-content">
             <div class="mini-header">
                 <span class="mini-title">
@@ -16,6 +18,13 @@
                     {% endif %}
                 </span>
                 <span class="mini-duration">{{ pt.task.estimated_duration }}m</span>
+                {% if pt.task.tags %}
+                <span class="mini-tag-icons">
+                    {% for tag in pt.task.tags %}
+                    <i data-lucide="{{ tag.icon }}" style="width:12px;height:12px;color:{{ tag.color }}"></i>
+                    {% endfor %}
+                </span>
+                {% endif %}
             </div>
             {% if pt.scheduled_time %}
             <span class="mini-time">{{ pt.scheduled_time.strftime('%H:%M') }}</span>

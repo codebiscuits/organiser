@@ -22,6 +22,28 @@ class RecurrenceCreate(BaseModel):
     end_date: datetime | None = None
 
 
+class TagCreate(BaseModel):
+    name: str
+    icon: str
+    color: str
+
+
+class TagUpdate(BaseModel):
+    name: str | None = None
+    icon: str | None = None
+    color: str | None = None
+
+
+class TagResponse(BaseModel):
+    id: int
+    name: str
+    icon: str
+    color: str
+
+    class Config:
+        from_attributes = True
+
+
 class TaskCreate(BaseModel):
     type: TaskType
     title: str
@@ -38,6 +60,7 @@ class TaskCreate(BaseModel):
     recurrence: RecurrenceCreate | None = None
     preset_id: int | None = None
     allowed_days: str | None = None
+    tag_ids: list[int] = []
 
 
 class TaskUpdate(BaseModel):
@@ -57,6 +80,7 @@ class TaskUpdate(BaseModel):
     recurrence: RecurrenceCreate | None = None
     preset_id: int | None = None
     allowed_days: str | None = None
+    tag_ids: list[int] | None = None
 
 
 class TaskResponse(BaseModel):

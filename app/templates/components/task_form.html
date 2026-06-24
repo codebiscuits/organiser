@@ -2,6 +2,7 @@
     submitting: false,
     selectedDays: [],
     allowedDays: [],
+    selectedTagIds: [],
     presets: [],
     selectedPresetId: '',
     presetName: '',
@@ -111,7 +112,8 @@
             notes: this.form.notes || null,
             estimated_duration: this.form.estimated_duration,
             importance: this.form.importance,
-            allow_afternoon: this.form.allow_afternoon
+            allow_afternoon: this.form.allow_afternoon,
+            tag_ids: this.selectedTagIds.map(Number)
         };
         if (this.showUrgency()) {
             payload.urgency = this.form.urgency;

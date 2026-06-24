@@ -15,6 +15,7 @@
     </script>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script defer src="https://unpkg.com/alpinejs@3.13.5/dist/cdn.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
 <body>
     <header>
@@ -49,6 +50,10 @@
     </main>
     
     <script src="/static/js/app.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => lucide.createIcons());
+        document.body.addEventListener('htmx:afterSwap', () => lucide.createIcons());
+    </script>
     <script>
         function showUndoToast(logIds, label) {
             document.getElementById('undo-toast')?.remove();

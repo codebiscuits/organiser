@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+
+{% block title %}{% if tag %}Edit Tag{% else %}New Tag{% endif %} - Admin{% endblock %}
+
+{% block content %}
+<section class="admin-section" x-data="{
+    icon: '{{ tag.icon if tag else 'tag' }}',
+    renderIcon() {
+        const el = this.$refs.iconPreview;
+        el.innerHTML = '<i data-lucide=\'' + this.icon + '\'></i>';
+        lucide.createIcons({ el: el });
+    }
+}" x-init="renderIcon()">
+    <div class="section-header">
+        <h2>{% if tag %}Edit Tag{% else %}New Tag{% endif %}</h2>
+        <a href="/admin/tags" class="btn-back">← Back to Tags</a>
+    </div>
+
+    <form method="POST" action="{% if tag %}/admin/tags/{{ tag.id }}{% else %}/admin/tags{% endif %}" class="admin-form">
+        <div class="form-group">
+            <label for="name">Name</label>
+            <input type="text" id="name" name="name" value="{{ tag.name if tag else '' }}" required placeholder="e.g. Work">
+        </div>
+
+        <div class="form-group">
+            <label for="color">Color</label>
+            <div class="color-picker">
+                {% set colors = [
+                    ('#7eb8d4', 'Dusty Blue'),
+                    ('#8fbe8f', 'Sage Green'),
+                    ('#d4856a', 'Warm Terracotta'),
+                    ('#a89fd4', 'Soft Lavender'),
+                    ('#d4b86a', 'Amber'),
+                    ('#d48fa0', 'Rose'),
+                    ('#6ab4b4', 'Steel Teal'),
+                    ('#8f9fd4', 'Slate Violet'),
+                ] %}
+                {% for hex, label in colors %}
+                <label class="color-option" title="{{ label }}">
+                    <input type="radio" name="color" value="{{ hex }}"
+                           {% if (tag and tag.color == hex) or (not tag and loop.first) %}checked{% endif %}>
+                    <span class="color-swatch" style="background-color: {{ hex }}"></span>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="icon">Icon <span class="form-hint-inline">(Lucide icon name, e.g. briefcase, home, dumbbell)</span></label>
+            <div class="icon-input-row">
+                <input type="text" id="icon" name="icon" x-model="icon" @input.debounce.300ms="renderIcon()" required placeholder="e.g. briefcase">
+                <div class="icon-preview-box" x-ref="iconPreview"></div>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <a href="/admin/tags" class="btn-cancel">Cancel</a>
+            <button type="submit" class="btn-submit">{% if tag %}Save Changes{% else %}Create Tag{% endif %}</button>
+        </div>
+    </form>
+</section>
+
+<style>
+.admin-section { max-width: 500px; }
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+}
+
+.btn-back {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+
+.admin-form { display: flex; flex-direction: column; gap: 1.25rem; }
+
+.form-group { display: flex; flex-direction: column; gap: 0.4rem; }
+
+.form-group label { font-size: 0.9rem; font-weight: 500; color: var(--text-primary); }
+
+.form-group input[type="text"] {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.95rem;
+}
+
+.form-hint-inline { font-weight: 400; font-size: 0.8rem; color: var(--text-secondary); }
+
+.color-picker {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.color-option {
+    cursor: pointer;
+    position: relative;
+}
+
+.color-option input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.color-swatch {
+    display: block;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    transition: border-color 0.15s, transform 0.1s;
+}
+
+.color-option input[type="radio"]:checked + .color-swatch {
+    border-color: var(--text-primary);
+    transform: scale(1.15);
+}
+
+.icon-input-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.icon-input-row input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.95rem;
+}
+
+.icon-preview-box {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+}
+
+.icon-preview-box svg {
+    width: 18px;
+    height: 18px;
+    color: var(--text-primary);
+}
+
+.form-actions {
+    display: flex;
+    gap: 0.75rem;
+    padding-top: 0.5rem;
+}
+
+.btn-submit {
+    padding: 0.5rem 1.25rem;
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.btn-cancel {
+    padding: 0.5rem 1.25rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+</style>
+{% endblock %}
