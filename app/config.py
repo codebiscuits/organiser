@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     urgency_low_threshold: int = 7
     urgency_medium_threshold: int = 2
     
+    # Push notifications
+    vapid_private_key: str = ""
+    vapid_public_key: str = ""
+    vapid_subject: str = "mailto:admin@example.com"
+    notification_lead_minutes: int = 30
+
     class Config:
         env_file = ".env"
 

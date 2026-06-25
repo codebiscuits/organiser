@@ -19,6 +19,14 @@ def run_migrations(eng):
         "ALTER TABLE completed_tasks ADD COLUMN task_type VARCHAR",
         "ALTER TABLE completed_tasks ADD COLUMN task_title VARCHAR",
         "ALTER TABLE completed_tasks ADD COLUMN auto_completed BOOLEAN DEFAULT 0",
+        "ALTER TABLE tasks ADD COLUMN push_notified_at DATETIME",
+        """CREATE TABLE IF NOT EXISTS push_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            endpoint VARCHAR UNIQUE NOT NULL,
+            p256dh VARCHAR NOT NULL,
+            auth VARCHAR NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )""",
     ]
     with eng.connect() as conn:
         for sql in migrations:

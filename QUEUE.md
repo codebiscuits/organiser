@@ -52,6 +52,13 @@ Any gotchas, design decisions made during discussion, or things to watch out for
 
 ## Done
 
+### Push notifications
+**Status:** done
+**Added:** 2026-06-25
+
+**Description:**
+Background push notifications on Android for appointments. Bell icon in header to subscribe/unsubscribe. Notification fires at `prep_duration` minutes before the appointment (or 30 min default). VAPID keys stored in `.env`.
+
 ### Task tagging and categorisation
 **Status:** done
 **Added:** 2026-06-23

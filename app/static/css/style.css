@@ -60,6 +60,36 @@
     border-color: var(--accent-deep);
 }
 
+.notify-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s, border-color 0.2s;
+    margin-left: 1rem;
+    flex-shrink: 0;
+}
+
+.notify-toggle:hover {
+    color: var(--accent-deep);
+    border-color: var(--accent-deep);
+}
+
+.notify-toggle.notify-active {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+.notify-toggle.notify-active svg {
+    fill: var(--accent);
+}
+
 /* Show moon in light mode, sun in dark mode */
 .theme-toggle .icon-sun { display: none; }
 .theme-toggle .icon-moon { display: inline; }

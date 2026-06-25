@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -5,8 +7,18 @@ from fastapi.templating import Jinja2Templates
 from app.database import engine, run_migrations
 from app.models import Base
 from app.routers import tasks, workouts, admin, presets, undo
+from app.routers import push as push_router
+from app.services import scheduler
 
-app = FastAPI(title="Life Organiser")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler.start()
+    yield
+    scheduler.stop()
+
+
+app = FastAPI(title="Life Organiser", lifespan=lifespan)
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -28,6 +40,7 @@ app.include_router(workouts.router, prefix="/workouts", tags=["workouts"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(presets.router, prefix="/presets", tags=["presets"])
 app.include_router(undo.router, prefix="/undo", tags=["undo"])
+app.include_router(push_router.router, prefix="/push", tags=["push"])
 
 
 if __name__ == "__main__":
