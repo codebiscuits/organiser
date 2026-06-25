@@ -29,22 +29,32 @@ async function initNotificationButton() {
     updateNotifyButton(btn, existing ? 'subscribed' : Notification.permission);
 
     btn.addEventListener('click', async () => {
-        const sub = await reg.pushManager.getSubscription();
-        if (sub) {
-            await sub.unsubscribe();
-            await fetch('/push/unsubscribe', { method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(await getSubscriptionPayload(sub)) });
-            btn.dataset.subscribed = 'false';
-            updateNotifyButton(btn, 'default');
-        } else {
-            const res = await fetch('/push/public-key');
-            const { publicKey } = await res.json();
-            const newSub = await reg.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: await urlBase64ToUint8Array(publicKey),
-            });
-            await fetch('/push/subscribe', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(await getSubscriptionPayload(newSub)) });
-            btn.dataset.subscribed = 'true';
-            updateNotifyButton(btn, 'granted');
+        try {
+            const sub = await reg.pushManager.getSubscription();
+            if (sub) {
+                await sub.unsubscribe();
+                await fetch('/push/unsubscribe', { method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(await getSubscriptionPayload(sub)) });
+                btn.dataset.subscribed = 'false';
+                updateNotifyButton(btn, 'default');
+            } else {
+                if (Notification.permission === 'denied') {
+                    alert('Notifications are blocked in your browser. Check your site settings to allow them.');
+                    return;
+                }
+                const res = await fetch('/push/public-key');
+                if (!res.ok) throw new Error(`Failed to fetch public key: ${res.status}`);
+                const { publicKey } = await res.json();
+                const newSub = await reg.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: await urlBase64ToUint8Array(publicKey),
+                });
+                await fetch('/push/subscribe', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(await getSubscriptionPayload(newSub)) });
+                btn.dataset.subscribed = 'true';
+                updateNotifyButton(btn, 'granted');
+            }
+        } catch (err) {
+            console.error('Notification toggle failed:', err);
+            alert(`Notification error: ${err.message}`);
         }
     });
 }
@@ -58,7 +68,9 @@ function updateNotifyButton(btn, state) {
 
 // Service worker registration + notification button init
 if ('serviceWorker' in navigator && 'PushManager' in window) {
-    navigator.serviceWorker.register('/static/sw.js').then(() => initNotificationButton());
+    navigator.serviceWorker.register('/sw.js')
+        .then(() => initNotificationButton())
+        .catch(err => console.error('SW registration failed:', err));
 } else {
     document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('notify-toggle')?.remove();

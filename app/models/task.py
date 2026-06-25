@@ -28,6 +28,7 @@ class Task(Base):
     manual_scheduled_time = Column(DateTime)  # user-set time from timeline drag-and-drop
     preset_id = Column(Integer, ForeignKey("task_presets.id"), nullable=True)
     allowed_days = Column(String)  # comma-separated day indices, Sunday=0
+    push_notified_at = Column(DateTime)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
