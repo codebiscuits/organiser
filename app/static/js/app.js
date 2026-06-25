@@ -57,8 +57,12 @@ function updateNotifyButton(btn, state) {
 }
 
 // Service worker registration + notification button init
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && 'PushManager' in window) {
     navigator.serviceWorker.register('/static/sw.js').then(() => initNotificationButton());
+} else {
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('notify-toggle')?.remove();
+    });
 }
 
 // Light/dark theme toggle
