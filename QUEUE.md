@@ -52,6 +52,13 @@ Any gotchas, design decisions made during discussion, or things to watch out for
 
 ## Done
 
+### Per-task notifications + push delivery fixes
+**Status:** done
+**Added:** 2026-07-06
+
+**Description:**
+Optional per-task notifications: attach one or more to any appointment, each firing at the scheduled time or N minutes before (stored as offsets in `task_notifications`, so rescheduling moves them). Also hardened delivery: dead subscriptions auto-pruned, `pushsubscriptionchange` re-subscribe, `POST /push/test` debug endpoint, all devices attempted per send. Delivery to Android confirmed working 2026-07-06 — required HTTPS via `tailscale serve` and converting the PEM-formatted VAPID private key in `.env` to raw base64 (see README).
+
 ### Push notifications
 **Status:** done
 **Added:** 2026-06-25

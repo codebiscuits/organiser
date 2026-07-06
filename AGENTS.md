@@ -49,8 +49,12 @@ FastAPI app
 | `app/services/workout_algorithm.py` | `select_todays_exercises` (recovery scoring) |
 | `app/routers/tasks.py` | All `/tasks/*` routes including workout completion |
 | `app/routers/admin.py` | Full CRUD for tasks, exercises, muscle groups, history |
-| `app/static/sw.js` | PWA service worker (caching + push handler) |
-| `app/static/js/app.js` | Alpine countdown component |
+| `app/models/task_notification.py` | `TaskNotification` — per-task push notification offsets |
+| `app/services/push.py` | `send_push` — pywebpush wrapper, returns `"ok"/"gone"/"failed"` |
+| `app/services/scheduler.py` | 1-min APScheduler job: appointment reminders + per-task notifications |
+| `app/routers/push.py` | `/push/*` — subscribe, unsubscribe, public-key, test |
+| `app/static/sw.js` | Service worker: push display, notification click, `pushsubscriptionchange` re-subscribe (no asset caching — deliberately stripped) |
+| `app/static/js/app.js` | Alpine countdown component + notification bell subscribe flow |
 
 ---
 
@@ -146,7 +150,23 @@ performed_at
 Single-user. Auto-created on first `/admin/user` visit.
 
 ```
-id, email, push_subscription (JSON), available_hours_per_day (default 6), preferences (JSON)
+id, email, push_subscription (JSON — dead column, unused; real store is the push_subscriptions table), available_hours_per_day (default 6), preferences (JSON)
+```
+
+### push_subscriptions
+
+One row per subscribed device/browser (Web Push endpoint + encryption keys). Managed via `/push/subscribe` and `/push/unsubscribe`; dead endpoints (404/410) are pruned automatically on send.
+
+```
+id, endpoint (unique), p256dh, auth, created_at
+```
+
+### task_notifications
+
+User-configured per-task push notifications, stored as offsets so rescheduling a task moves unfired notifications.
+
+```
+id, task_id (FK tasks, cascade), offset_minutes (0 = at scheduled time, N = N min before), sent_at (null until fired)
 ```
 
 ---
@@ -319,7 +339,7 @@ Be aware of these gaps when making changes:
 
 | Area | Status | Details |
 |------|--------|---------|
-| Push notifications (server-side) | Not implemented | SW handles incoming push events; no server-side sending code exists |
+| Deadline/overrun push triggers | Not implemented | Appointment reminders and per-task notifications work end-to-end; deadline urgency escalation and task-overrun alerts do not exist. NOTE: `VAPID_PRIVATE_KEY` in `.env` must be raw urlsafe-base64 (43 chars), never PEM — see README |
 | `/workouts` router | Stub | All three routes return empty/None — real workout flow is in `/tasks/{id}/complete/workout` |
 | Deferred count in sort | Minor bug | `get_flexible_tasks` sorts correctly, but manual tasks are separated before sorting, so deferred_count may not fully apply |
 

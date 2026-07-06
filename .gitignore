@@ -5,3 +5,4 @@ __pycache__/
 *.db
 .env
 app/templates/base.sync-conflict-*.html
+.env.bak
