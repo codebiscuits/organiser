@@ -33,6 +33,16 @@ class Task(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     tags = relationship("Tag", secondary="task_tags", lazy="select")
+    notifications = relationship(
+        "TaskNotification",
+        back_populates="task",
+        cascade="all, delete-orphan",
+        lazy="select",
+    )
+
+    @property
+    def notification_offsets(self):
+        return sorted(n.offset_minutes for n in self.notifications)
 
 
 class CompletedTask(Base):

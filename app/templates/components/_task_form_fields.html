@@ -85,9 +85,34 @@ Optional:
         
         <div class="form-group">
             <label for="location">Location (optional)</label>
-            <input type="text" id="location" x-model="form.location" 
+            <input type="text" id="location" x-model="form.location"
                    {% if useFormNames %}name="location"{% endif %} placeholder="e.g., Doctor's office">
         </div>
+
+        <!-- Notifications (not available in the admin plain-POST form, which
+             has no notificationRows/addNotificationRow/removeNotificationRow
+             in its Alpine component) -->
+        {% if not useFormNames %}
+        <div class="form-group notifications-group">
+            <label>Notifications</label>
+            <div class="notification-rows">
+                <template x-for="(row, index) in notificationRows" :key="index">
+                    <div class="notification-row">
+                        <select x-model="row.mode" class="notification-mode">
+                            <option value="at">At scheduled time</option>
+                            <option value="before">Minutes before</option>
+                        </select>
+                        <input type="number" x-model.number="row.minutes" x-show="row.mode === 'before'"
+                               class="notification-minutes" min="1" placeholder="e.g., 15">
+                        <button type="button" class="btn-icon-remove" @click="removeNotificationRow(index)"
+                                aria-label="Remove notification">&times;</button>
+                    </div>
+                </template>
+            </div>
+            <button type="button" class="btn-secondary btn-add-notification" @click="addNotificationRow()">+ Add notification</button>
+            <span class="form-hint">Get a push reminder at the scheduled time, or a set number of minutes before.</span>
+        </div>
+        {% endif %}
     </div>
 </template>
 

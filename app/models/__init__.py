@@ -13,3 +13,4 @@ from app.models.preset import TaskPreset
 from app.models.action_log import ActionLog
 from app.models.tag import Tag, TaskTag
 from app.models.push_subscription import PushSubscription
+from app.models.task_notification import TaskNotification

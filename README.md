@@ -71,6 +71,16 @@ sudo tailscale up
 
 Install Tailscale on your phone and sign in with the same account. Access the app at `http://<pi-tailscale-ip>:8888`.
 
+#### HTTPS via `tailscale serve` (required for push notifications on Android)
+
+Plain HTTP is not a secure context, so Android Chrome won't expose `serviceWorker`/`PushManager` at `http://<pi-tailscale-ip>:8888` — the notification bell stays hidden and no subscription can ever be created. `tailscale serve` puts a TLS terminator in front of uvicorn with no code changes needed:
+
+1. In the Tailscale admin console: enable **MagicDNS** and **HTTPS Certificates** (Settings → tailnet features), if not already on.
+2. On the Pi: `sudo tailscale serve --bg --https=443 http://localhost:8888` (`--bg` persists across reboots; verify with `tailscale serve status`).
+3. On the phone: open `https://<pi-hostname>.<tailnet>.ts.net`, optionally install the PWA, tap the bell, and grant notification permission.
+
+The phone URL changes from `http://<pi-tailscale-ip>:8888` to `https://<pi-hostname>.<tailnet>.ts.net`. Use `POST /push/test` (or the bell's subscribe flow) to confirm delivery once subscribed.
+
 ### Auto-deploy
 
 A systemd timer runs `scripts/update.sh` every 60 seconds. It pulls from `origin/main` and restarts the service only when new commits are detected.
@@ -139,19 +149,24 @@ app/
 ├── database.py           # SQLAlchemy engine + session factory
 ├── models/
 │   ├── task.py           # Task, CompletedTask
+│   ├── task_notification.py # TaskNotification (per-task push notification offsets)
 │   ├── recurrence.py     # Recurrence, Projection
 │   ├── workout.py        # MuscleGroup, Exercise, ExerciseMuscle, PerformedSet
-│   └── user.py           # User (settings, push subscription)
+│   ├── push_subscription.py # PushSubscription (Web Push endpoint/keys)
+│   └── user.py           # User (settings)
 ├── schemas/
 │   └── task.py           # Pydantic schemas for API request/response
 ├── routers/
 │   ├── tasks.py          # /tasks/* endpoints (main user-facing API)
+│   ├── push.py           # /push/* (subscribe/unsubscribe/public-key/test)
 │   ├── workouts.py       # /workouts/* (stub - workout flow is in tasks.py)
 │   └── admin.py          # /admin/* (CRUD, history, muscle groups, exercises)
 ├── services/
 │   ├── prioritisation.py # Core scheduling algorithm (fixed + flexible tasks, gap filling)
 │   ├── scheduling.py     # Window helpers, build_daily_schedule, capacity
 │   ├── recurrence.py     # Projection table generation
+│   ├── scheduler.py      # APScheduler job: appointment + per-task push notifications
+│   ├── push.py           # send_push() — pywebpush wrapper, "ok"/"gone"/"failed"
 │   └── workout_algorithm.py # Exercise selection (recovery scoring)
 ├── templates/
 │   ├── base.html         # Base layout (nav, HTMX/Alpine includes)
@@ -187,6 +202,7 @@ A fixed-time commitment.
 - **Completion:** Removed from tasks table; recorded in `completed_tasks`
 - **Overdue:** Once `scheduled_at` falls before today, it's auto-completed by the overdue sweep (see [Overdue Handling & Undo](#overdue-handling--undo))
 - **Notes:** Can be placed in evening window (work shifts) via manual scheduling
+- **Notifications:** Can have one or more push notifications attached (see [Per-Task Notifications](#per-task-notifications))
 
 ### 2. Deadline
 A task with a firm due date and time.
@@ -488,12 +504,29 @@ Recurrence rules live in the `recurrence` table. Pre-computed occurrences live i
 
 ## PWA
 
-The service worker (`app/static/sw.js`) uses network-first with cache fallback. Web Push is wired up via `pywebpush` — the push subscription is stored in `users.push_subscription` (JSON).
+The service worker (`app/static/sw.js`) does no asset caching (deliberately stripped — a failing cache install silently blocked activation); it exists for push notifications. Web Push notifications are fully implemented server-side via `pywebpush` + VAPID:
 
-Planned notification triggers (partially implemented):
-- Appointment reminders (1 day and 1 hour before)
-- Deadline urgency escalation
-- Task overrun (task not completed past its estimated duration)
+- Subscriptions are stored in the `push_subscriptions` table (one row per device/browser), managed via `POST /push/subscribe` and `DELETE /push/unsubscribe` (see `app/routers/push.py`, `app/static/js/app.js`).
+- A 1-minute APScheduler job (`app/services/scheduler.py`) checks for due notifications and sends them via `send_push` (`app/services/push.py`).
+- `send_push` returns `"ok"`, `"gone"` (404/410 — dead subscription, deleted automatically), or `"failed"` (retried on the next tick). Delivery is attempted to every stored subscription every tick — one device failing or being pruned never blocks another.
+- `POST /push/test` sends a test notification to every stored subscription and reports per-endpoint results — the main tool for debugging delivery on a given device.
+- `app/static/sw.js` re-subscribes automatically on `pushsubscriptionchange` (e.g. when Android/FCM rotates the subscription) and focuses an already-open window on notification click instead of always opening a new tab.
+
+Notification triggers:
+- **Appointment reminders** — fires once per appointment, `prep_duration` (or the default `notification_lead_minutes`) before `scheduled_at`.
+- **Per-task notifications** — see below.
+
+Not yet implemented: deadline urgency escalation, task overrun alerts.
+
+### Per-Task Notifications
+
+Any appointment can have one or more additional push notifications attached, independent of the automatic appointment reminder above:
+
+- Each notification is stored as an **offset in minutes** from the task's `scheduled_at` (`app/models/task_notification.py`, table `task_notifications`) — `0` means "at the scheduled time", `N` means "N minutes before". Storing an offset rather than an absolute time means rescheduling the task automatically moves any notification that hasn't fired yet.
+- Configured from the task create/edit form's "Notifications" section — add/remove rows, each either "At scheduled time" or "Minutes before" with a number input.
+- `TaskCreate.notification_offsets` / `TaskUpdate.notification_offsets` (`app/schemas/task.py`) drive the API: on create, one row is made per (deduplicated) offset; on update, providing the field replaces all existing rows, while omitting it (`None`) leaves them untouched and `[]` removes them all.
+- If an offset's fire time is already in the past at creation/update time, it's stamped `sent_at` immediately so the scheduler doesn't instantly fire it.
+- Deleting a task cascades to delete its notifications.
 
 ---
 
@@ -502,8 +535,8 @@ Planned notification triggers (partially implemented):
 The following are stubbed or partially implemented:
 
 - **`/workouts` router** — `GET /workouts/today`, `POST /workouts/log`, `GET /workouts/history` all return stubs. The actual workout flow goes through `/tasks/{id}/complete/workout`.
-- **Push notifications** — service worker handles incoming pushes, but the server-side sending logic isn't implemented.
 - **`deferred_count` tie-breaking in sort** — `PrioritisedTask.sort_key()` includes `deferred_count` but `get_flexible_tasks` sorts before deferred tasks are separated.
+- **Deadline/overdue notification triggers** — only appointment reminders and per-task notifications are implemented; deadline urgency escalation and task-overrun alerts are not.
 
 ---
 
@@ -513,7 +546,7 @@ The following are stubbed or partially implemented:
 uv run pytest
 ```
 
-Tests cover the prioritisation service, recurrence logic, workout algorithm, and API routes (191 tests).
+Tests cover the prioritisation service, recurrence logic, workout algorithm, API routes, and push notifications/per-task notifications (239 tests).
 
 ---
 

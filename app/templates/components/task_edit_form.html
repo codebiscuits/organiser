@@ -3,6 +3,9 @@
     selectedDays: {{ recurrence.day_of_week.split(',') if recurrence and recurrence.day_of_week else [] | tojson }},
     allowedDays: {{ task.allowed_days.split(',') if task.allowed_days else [] | tojson }},
     selectedTagIds: {{ task_tag_ids | map('string') | list | tojson }},
+    notificationRows: {{ task.notification_offsets | tojson }}.map(
+        o => o === 0 ? { mode: 'at', minutes: 15 } : { mode: 'before', minutes: o }
+    ),
     form: {
         type: '{{ task.type }}',
         title: '{{ task.title | e }}',
@@ -32,6 +35,12 @@
     showAllowAfternoon() {
         return ['errand', 'recurring', 'variable_recurring', 'workout'].includes(this.form.type);
     },
+    addNotificationRow() {
+        this.notificationRows.push({ mode: 'at', minutes: 15 });
+    },
+    removeNotificationRow(index) {
+        this.notificationRows.splice(index, 1);
+    },
     closeModal() {
         this.$root.remove();
     },
@@ -53,6 +62,9 @@
             payload.scheduled_at = this.form.scheduled_at;
             payload.prep_duration = this.form.prep_duration;
             payload.location = this.form.location || null;
+            payload.notification_offsets = this.notificationRows.map(
+                r => r.mode === 'at' ? 0 : Math.max(0, r.minutes || 0)
+            );
         }
         if (this.form.type === 'deadline') {
             payload.deadline_at = this.form.deadline_at;

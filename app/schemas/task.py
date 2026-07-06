@@ -1,6 +1,6 @@
 from datetime import datetime, time
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class TaskType(str, Enum):
@@ -61,6 +61,14 @@ class TaskCreate(BaseModel):
     preset_id: int | None = None
     allowed_days: str | None = None
     tag_ids: list[int] = []
+    notification_offsets: list[int] = Field(default_factory=list)
+
+    @field_validator("notification_offsets")
+    @classmethod
+    def _offsets_non_negative(cls, offsets: list[int]) -> list[int]:
+        if any(offset < 0 for offset in offsets):
+            raise ValueError("notification_offsets must be non-negative")
+        return offsets
 
 
 class TaskUpdate(BaseModel):
@@ -81,6 +89,14 @@ class TaskUpdate(BaseModel):
     preset_id: int | None = None
     allowed_days: str | None = None
     tag_ids: list[int] | None = None
+    notification_offsets: list[int] | None = None  # None = leave unchanged, [] = remove all
+
+    @field_validator("notification_offsets")
+    @classmethod
+    def _offsets_non_negative(cls, offsets: list[int] | None) -> list[int] | None:
+        if offsets is not None and any(offset < 0 for offset in offsets):
+            raise ValueError("notification_offsets must be non-negative")
+        return offsets
 
 
 class TaskResponse(BaseModel):
@@ -101,6 +117,7 @@ class TaskResponse(BaseModel):
     deferred_count: int
     preset_id: int | None = None
     allowed_days: str | None = None
+    notification_offsets: list[int] = []
     created_at: datetime
     updated_at: datetime
 

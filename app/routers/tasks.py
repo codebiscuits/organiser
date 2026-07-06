@@ -11,6 +11,7 @@ from app.models.task import Task, CompletedTask
 from app.models.recurrence import Recurrence, Projection
 from app.models.action_log import ActionLog
 from app.models.tag import Tag, TaskTag
+from app.models.task_notification import TaskNotification
 from app.services.undo import task_to_dict, recurrence_to_dict, projections_to_list
 from app.schemas.task import (
     TaskCreate,
@@ -27,6 +28,24 @@ from app.services.prioritisation import get_prioritised_tasks_with_metadata
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+
+
+def _sync_task_notifications(db: Session, task: Task, offsets: list[int]) -> None:
+    """
+    Replace task.notifications with one row per (deduped) offset.
+
+    Past-time guard: if scheduled_at - offset is already in the past at the
+    time of creation/update, the row is stamped sent_at=now immediately so
+    the scheduler's fire-when-overdue check doesn't instantly spam it.
+    """
+    db.query(TaskNotification).filter(TaskNotification.task_id == task.id).delete()
+
+    now = datetime.now()
+    for offset in sorted(set(offsets)):
+        sent_at = None
+        if task.scheduled_at is not None and (task.scheduled_at - timedelta(minutes=offset)) <= now:
+            sent_at = now
+        db.add(TaskNotification(task_id=task.id, offset_minutes=offset, sent_at=sent_at))
 
 
 def _prune_old_logs(db):
@@ -439,6 +458,9 @@ async def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
 
     for tag_id in task_data.tag_ids:
         db.add(TaskTag(task_id=task.id, tag_id=tag_id))
+
+    if task_data.notification_offsets:
+        _sync_task_notifications(db, task, task_data.notification_offsets)
 
     if task_data.type == "appointment" and task_data.prep_duration and task_data.scheduled_at:
         prep_task = Task(
@@ -911,6 +933,8 @@ async def update_task(task_id: str, task_data: TaskUpdate, response: Response, d
         db.query(TaskTag).filter(TaskTag.task_id == task_id).delete()
         for tag_id in task_data.tag_ids:
             db.add(TaskTag(task_id=task_id, tag_id=tag_id))
+    if task_data.notification_offsets is not None:
+        _sync_task_notifications(db, task, task_data.notification_offsets)
 
     if task_data.recurrence:
         existing_recurrence = db.query(Recurrence).filter(Recurrence.task_id == task_id).first()
