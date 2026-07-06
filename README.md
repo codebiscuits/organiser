@@ -506,6 +506,8 @@ Recurrence rules live in the `recurrence` table. Pre-computed occurrences live i
 
 The service worker (`app/static/sw.js`) does no asset caching (deliberately stripped — a failing cache install silently blocked activation); it exists for push notifications. Web Push notifications are fully implemented server-side via `pywebpush` + VAPID:
 
+> **VAPID key format:** `VAPID_PRIVATE_KEY` in `.env` must be the raw urlsafe-base64 key (43 chars), *not* a PEM block — pywebpush cannot parse PEM strings and every send fails with an ASN.1 "Could not deserialize key data" error. Generate a correctly formatted pair with `npx web-push generate-vapid-keys`, or convert an existing PEM key to its 32-byte private value, urlsafe-base64-encoded without padding.
+
 - Subscriptions are stored in the `push_subscriptions` table (one row per device/browser), managed via `POST /push/subscribe` and `DELETE /push/unsubscribe` (see `app/routers/push.py`, `app/static/js/app.js`).
 - A 1-minute APScheduler job (`app/services/scheduler.py`) checks for due notifications and sends them via `send_push` (`app/services/push.py`).
 - `send_push` returns `"ok"`, `"gone"` (404/410 — dead subscription, deleted automatically), or `"failed"` (retried on the next tick). Delivery is attempted to every stored subscription every tick — one device failing or being pruned never blocks another.
