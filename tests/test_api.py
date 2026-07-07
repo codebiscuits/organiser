@@ -921,6 +921,165 @@ class TestUpdateTask:
 
 
 # ---------------------------------------------------------------------------
+# Update task: type change (regression tests for the "editing type silently
+# fails" bug — see _replace_task_for_type_change in app/routers/tasks.py)
+# ---------------------------------------------------------------------------
+
+class TestUpdateTaskTypeChange:
+    def test_change_errand_to_deadline_creates_new_task_and_removes_old(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        old_id = data["id"]
+
+        resp = client.put(
+            f"/tasks/{old_id}",
+            json={
+                "type": "deadline",
+                "title": "Buy milk",
+                "importance": 2,
+                "deadline_at": "2099-05-01T12:00:00",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["type"] == "deadline"
+        assert body["deadline_at"].startswith("2099-05-01")
+        new_id = body["id"]
+        assert new_id != old_id
+
+        assert db.query(Task).filter(Task.id == old_id).first() is None
+        assert db.query(Task).filter(Task.id == new_id).first() is not None
+
+    def test_change_to_appointment_without_scheduled_at_returns_422_and_leaves_task_untouched(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+
+        resp = client.put(f"/tasks/{task_id}", json={"type": "appointment", "title": "Buy milk", "importance": 2})
+        assert resp.status_code == 422
+
+        # Original task must be completely unaffected by the rejected change.
+        task = db.query(Task).filter(Task.id == task_id).first()
+        assert task is not None
+        assert task.type == "errand"
+
+    def test_change_to_deadline_without_deadline_at_returns_422(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+
+        resp = client.put(f"/tasks/{task_id}", json={"type": "deadline", "title": "x", "importance": 2})
+        assert resp.status_code == 422
+        assert db.query(Task).filter(Task.id == task_id).first().type == "errand"
+
+    def test_change_to_recurring_without_recurrence_returns_422(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+
+        resp = client.put(f"/tasks/{task_id}", json={"type": "recurring", "title": "x", "importance": 2})
+        assert resp.status_code == 422
+        assert db.query(Task).filter(Task.id == task_id).first().type == "errand"
+
+    def test_change_to_recurring_generates_projections(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+
+        resp = client.put(
+            f"/tasks/{task_id}",
+            json={
+                "type": "recurring",
+                "title": "Daily stretch",
+                "importance": 2,
+                "urgency": 2,
+                "recurrence": {
+                    "interval_type": "daily",
+                    "interval_multiple": 1,
+                    "start_date": date.today().isoformat() + "T00:00:00",
+                },
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        new_id = resp.json()["id"]
+
+        recurrence = db.query(Recurrence).filter(Recurrence.task_id == new_id).first()
+        assert recurrence is not None
+        projections = db.query(Projection).filter(Projection.task_id == new_id).all()
+        assert len(projections) > 0, "recurring type change must generate projections, not just a bare Recurrence row"
+
+    def test_change_away_from_recurring_leaves_no_stale_projection(self, client, db):
+        """
+        The duplicate-appearance half of the bug: switching a recurring task
+        to another type must not leave its old Recurrence/Projection rows
+        around, since get_fixed_tasks/get_flexible_tasks match projections
+        to tasks by id alone (no type filter) and would otherwise show the
+        task a second time under its old recurring identity.
+        """
+        data = create_task(client, RECURRING_PAYLOAD)
+        task_id = data["id"]
+        assert db.query(Projection).filter(Projection.task_id == task_id).count() > 0
+
+        resp = client.put(
+            f"/tasks/{task_id}",
+            json={"type": "errand", "title": "Morning walk", "importance": 2, "urgency": 2},
+        )
+        assert resp.status_code == 200, resp.text
+        new_id = resp.json()["id"]
+
+        # Nothing left keyed to the old (deleted) task id.
+        assert db.query(Projection).filter(Projection.task_id == task_id).count() == 0
+        assert db.query(Recurrence).filter(Recurrence.task_id == task_id).count() == 0
+        # And the new task's own id has no projections either (it's an errand now).
+        assert db.query(Projection).filter(Projection.task_id == new_id).count() == 0
+
+    def test_type_change_preserves_tags(self, client, db):
+        from app.models.tag import Tag, TaskTag
+
+        tag = Tag(name="chores", icon="tag", color="#7eb8d4")
+        db.add(tag)
+        db.commit()
+        db.refresh(tag)
+
+        data = create_task(client, {**ERRAND_PAYLOAD, "tag_ids": [tag.id]})
+        task_id = data["id"]
+        assert db.query(TaskTag).filter(TaskTag.task_id == task_id).count() == 1
+
+        resp = client.put(
+            f"/tasks/{task_id}",
+            json={"type": "deadline", "title": "x", "importance": 2, "deadline_at": "2099-05-01T12:00:00"},
+        )
+        assert resp.status_code == 200, resp.text
+        new_id = resp.json()["id"]
+
+        new_tags = db.query(TaskTag).filter(TaskTag.task_id == new_id).all()
+        assert [t.tag_id for t in new_tags] == [tag.id]
+        assert db.query(TaskTag).filter(TaskTag.task_id == task_id).count() == 0
+
+    def test_type_change_no_undo_header(self, client, db):
+        """
+        Documented limitation: a type-change edit doesn't offer undo (see
+        _replace_task_for_type_change docstring), so no X-Undo-Log-Id header
+        should be present — showing an undo toast that doesn't work would be
+        worse than not offering one.
+        """
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+
+        resp = client.put(
+            f"/tasks/{task_id}",
+            json={"type": "deadline", "title": "x", "importance": 2, "deadline_at": "2099-05-01T12:00:00"},
+        )
+        assert resp.status_code == 200
+        assert "X-Undo-Log-Id" not in resp.headers
+
+    def test_same_type_update_unaffected_by_type_change_path(self, client, db):
+        """Sanity check: submitting the same type is still a normal in-place edit."""
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+
+        resp = client.put(f"/tasks/{task_id}", json={"type": "errand", "title": "Buy bread"})
+        assert resp.status_code == 200
+        assert resp.json()["id"] == task_id
+        assert resp.json()["title"] == "Buy bread"
+
+
+# ---------------------------------------------------------------------------
 # Admin: refresh projections
 # ---------------------------------------------------------------------------
 

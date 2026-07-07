@@ -945,16 +945,164 @@ async def edit_task_form(request: Request, task_id: str, db: Session = Depends(g
     )
 
 
+def _replace_task_for_type_change(db: Session, old_task: Task, task_data: TaskUpdate) -> Task:
+    """
+    Handle a task *type* change (e.g. errand -> recurring) safely.
+
+    Root cause this works around: the previous in-place `task.type = new_type`
+    update left behind whatever type-specific rows the OLD type had, and
+    never created what the NEW type needed:
+    - Switching AWAY from recurring/variable_recurring/workout left its
+      Recurrence + Projection rows in place. get_fixed_tasks/get_flexible_tasks
+      (app/services/prioritisation.py) match projections to tasks by
+      task_id alone, with no task.type filter, so the task could keep
+      appearing in the daily list via the stale projection *in addition* to
+      appearing under its new type — a duplicate.
+    - Switching INTO recurring/variable_recurring/workout never called
+      generate_projections, so the task got a Recurrence rule but zero
+      Projection rows and simply never appeared anywhere — a silent no-op.
+    Ross's "silently fails, unclear if duplicate or no-op" report matches
+    both symptoms, depending on the direction of the change.
+
+    Fix follows the agreed protocol: build and validate the new task's
+    fields *before* writing anything, so an invalid change (e.g. switching
+    to "appointment" with no scheduled_at) fails loudly with a 422 and
+    leaves the original task completely untouched. Once validated, a new
+    Task row is created with a fresh id and proper recurrence/projections/
+    tags/notifications (mirroring create_task's logic exactly), and only
+    then is the old task — and its recurrence/projections/exclusions/
+    notifications/tags — deleted.
+
+    Limitation (documented, not silently swallowed): this path does not
+    support undo. The generic "edit" undo only restores plain columns on
+    whatever row still has the logged task_id; it has no way to safely
+    reinstate a deleted task's id, recurrence rows or projections. Rather
+    than offer a half-working undo button, a type-change edit simply
+    doesn't set X-Undo-Log-Id, so the frontend shows no undo toast for it.
+    """
+    new_type = task_data.type.value
+
+    if new_type == "appointment" and not task_data.scheduled_at:
+        raise HTTPException(
+            status_code=422,
+            detail="Changing this task to an appointment requires a scheduled date & time.",
+        )
+    if new_type == "deadline" and not task_data.deadline_at:
+        raise HTTPException(
+            status_code=422,
+            detail="Changing this task to a deadline requires a deadline date & time.",
+        )
+    if new_type in ("recurring", "workout", "variable_recurring") and not task_data.recurrence:
+        raise HTTPException(
+            status_code=422,
+            detail="Changing this task to a recurring type requires a recurrence rule.",
+        )
+
+    existing_tag_ids = [tt.tag_id for tt in db.query(TaskTag).filter(TaskTag.task_id == old_task.id).all()]
+    tag_ids = task_data.tag_ids if task_data.tag_ids is not None else existing_tag_ids
+
+    new_task = Task(
+        type=new_type,
+        title=task_data.title if task_data.title is not None else old_task.title,
+        notes=task_data.notes if task_data.notes is not None else old_task.notes,
+        estimated_duration=(
+            task_data.estimated_duration if task_data.estimated_duration is not None
+            else old_task.estimated_duration
+        ),
+        importance=task_data.importance if task_data.importance is not None else old_task.importance,
+        urgency=task_data.urgency if task_data.urgency is not None else old_task.urgency,
+        allow_afternoon=(
+            task_data.allow_afternoon if task_data.allow_afternoon is not None
+            else old_task.allow_afternoon
+        ),
+        # Type-specific date fields don't carry across a type change — an
+        # old deadline_at is meaningless once the task is an appointment.
+        deadline_at=task_data.deadline_at if new_type == "deadline" else None,
+        scheduled_at=task_data.scheduled_at if new_type == "appointment" else None,
+        prep_duration=task_data.prep_duration if task_data.prep_duration is not None else old_task.prep_duration,
+        scheduled_time=(
+            task_data.scheduled_time if task_data.scheduled_time is not None else old_task.scheduled_time
+        ),
+        location=task_data.location if task_data.location is not None else old_task.location,
+        preset_id=old_task.preset_id,
+        allowed_days=task_data.allowed_days if task_data.allowed_days is not None else old_task.allowed_days,
+        status="pending",
+    )
+    db.add(new_task)
+    db.flush()
+
+    if new_type in ("recurring", "workout"):
+        recurrence = Recurrence(
+            task_id=new_task.id,
+            interval_type=task_data.recurrence.interval_type,
+            interval_multiple=task_data.recurrence.interval_multiple,
+            day_of_week=task_data.recurrence.day_of_week,
+            day_of_month=task_data.recurrence.day_of_month,
+            month_of_year=task_data.recurrence.month_of_year,
+            start_date=task_data.recurrence.start_date.date() if task_data.recurrence.start_date else date.today(),
+            end_date=task_data.recurrence.end_date.date() if task_data.recurrence.end_date else None,
+        )
+        db.add(recurrence)
+        db.flush()
+        start = recurrence.start_date or date.today()
+        end = start + timedelta(days=90)
+        for projection in generate_projections(db, recurrence, start, end):
+            db.add(projection)
+    elif new_type == "variable_recurring":
+        recurrence = Recurrence(
+            task_id=new_task.id,
+            interval_type=task_data.recurrence.interval_type,
+            interval_multiple=task_data.recurrence.interval_multiple,
+            day_of_week=task_data.recurrence.day_of_week,
+            day_of_month=task_data.recurrence.day_of_month,
+            month_of_year=task_data.recurrence.month_of_year,
+            start_date=task_data.recurrence.start_date.date() if task_data.recurrence.start_date else date.today(),
+            end_date=task_data.recurrence.end_date.date() if task_data.recurrence.end_date else None,
+        )
+        db.add(recurrence)
+        db.flush()
+        start = recurrence.start_date or date.today()
+        db.add(Projection(task_id=new_task.id, due_date=start))
+
+    for tag_id in tag_ids:
+        db.add(TaskTag(task_id=new_task.id, tag_id=tag_id))
+
+    if new_type == "appointment" and task_data.notification_offsets:
+        _sync_task_notifications(db, new_task, task_data.notification_offsets)
+
+    # The old task is fully superseded by new_task above — remove it and
+    # everything keyed to its id.
+    db.query(TaskNotification).filter(TaskNotification.task_id == old_task.id).delete()
+    db.query(TaskTag).filter(TaskTag.task_id == old_task.id).delete()
+    db.query(Projection).filter(Projection.task_id == old_task.id).delete()
+    db.query(ProjectionExclusion).filter(ProjectionExclusion.task_id == old_task.id).delete()
+    db.query(Recurrence).filter(Recurrence.task_id == old_task.id).delete()
+    db.delete(old_task)
+
+    db.commit()
+    db.refresh(new_task)
+    return new_task
+
+
 @router.put("/{task_id}", response_model=TaskResponse)
 async def update_task(task_id: str, task_data: TaskUpdate, response: Response, db: Session = Depends(get_db)):
-    """Update an existing task."""
+    """
+    Update an existing task.
+
+    A change to `type` is delegated to _replace_task_for_type_change, which
+    replaces the task rather than mutating it in place — see that
+    function's docstring for why an in-place type change was unsafe.
+    """
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    if task_data.type is not None and task_data.type.value != task.type:
+        return _replace_task_for_type_change(db, task, task_data)
+
     task_snap = json.dumps(task_to_dict(task))
     task_title = task.title
-    
+
     if task_data.title is not None:
         task.title = task_data.title
     if task_data.type is not None:
@@ -1003,6 +1151,11 @@ async def update_task(task_id: str, task_data: TaskUpdate, response: Response, d
             if task_data.recurrence.end_date:
                 existing_recurrence.end_date = task_data.recurrence.end_date.date()
         else:
+            # Task had no recurrence row before (e.g. it's newly recurring
+            # via a same-type edit that only just added a recurrence).
+            # Also generate its projections here — a bare Recurrence row
+            # with no Projection rows would never show up in the daily or
+            # weekly view.
             recurrence = Recurrence(
                 task_id=task.id,
                 interval_type=task_data.recurrence.interval_type,
@@ -1014,6 +1167,11 @@ async def update_task(task_id: str, task_data: TaskUpdate, response: Response, d
                 end_date=task_data.recurrence.end_date.date() if task_data.recurrence.end_date else None,
             )
             db.add(recurrence)
+            db.flush()
+            start = recurrence.start_date or date.today()
+            end = start + timedelta(days=90)
+            for projection in generate_projections(db, recurrence, start, end):
+                db.add(projection)
 
     log = ActionLog(
         action_type="edit",
