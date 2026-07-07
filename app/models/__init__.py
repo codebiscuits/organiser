@@ -6,7 +6,7 @@ class Base(DeclarativeBase):
 
 
 from app.models.task import Task, CompletedTask
-from app.models.recurrence import Recurrence, Projection
+from app.models.recurrence import Recurrence, Projection, ProjectionExclusion
 from app.models.workout import MuscleGroup, Exercise, ExerciseMuscle, PerformedSet
 from app.models.user import User
 from app.models.preset import TaskPreset

@@ -8,7 +8,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
-from app.models.recurrence import Projection, Recurrence
+from app.models.recurrence import Projection, ProjectionExclusion, Recurrence
 from app.services.recurrence import generate_projections, refresh_projections
 from datetime import timedelta
 from app.models.task import CompletedTask, Task
@@ -263,6 +263,7 @@ async def admin_task_delete(task_id: str, db: Session = Depends(get_db)):
     if task:
         db.query(Recurrence).filter(Recurrence.task_id == task_id).delete()
         db.query(Projection).filter(Projection.task_id == task_id).delete()
+        db.query(ProjectionExclusion).filter(ProjectionExclusion.task_id == task_id).delete()
         db.delete(task)
         db.commit()
     return Response(status_code=200)

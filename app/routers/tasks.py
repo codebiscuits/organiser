@@ -4,11 +4,12 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.task import Task, CompletedTask
-from app.models.recurrence import Recurrence, Projection
+from app.models.recurrence import Recurrence, Projection, ProjectionExclusion
 from app.models.action_log import ActionLog
 from app.models.tag import Tag, TaskTag
 from app.models.task_notification import TaskNotification
@@ -194,6 +195,34 @@ async def new_task_form(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(request, "components/task_form.html", {"tags": tags})
 
 
+@router.get("/check-title")
+async def check_title(
+    title: str,
+    exclude_id: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Case-insensitive check for an existing task with this title.
+
+    Used by the create/edit task forms to show a non-blocking duplicate
+    warning — awareness only, creation is never prevented. `exclude_id` lets
+    the edit form ignore a match against the task being edited itself.
+
+    NOTE: registered before /{task_id} — a literal path here would otherwise
+    never be reached (FastAPI matches routes in registration order and the
+    catch-all /{task_id} would swallow "/check-title" as a task_id).
+    """
+    normalized = title.strip().lower()
+    if not normalized:
+        return {"duplicate": False}
+
+    query = db.query(Task).filter(func.lower(Task.title) == normalized)
+    if exclude_id:
+        query = query.filter(Task.id != exclude_id)
+    match = query.first()
+    return {"duplicate": match is not None, "title": match.title if match else None}
+
+
 @router.get("/all", response_model=list[TaskResponse])
 async def get_all_tasks(db: Session = Depends(get_db)):
     """Get all tasks (API endpoint)."""
@@ -328,21 +357,31 @@ async def delete_projection(
 ):
     """
     Delete a single projection instance (one occurrence of a recurring task).
-    
+
     Does not delete the task itself, only removes the projection for the specified date.
+
+    Also records a ProjectionExclusion tombstone so a later regeneration
+    (refresh_projections, admin's regenerate-all, etc.) doesn't resurrect
+    this specific occurrence — see app/services/recurrence.py.
     """
     projection_date = datetime.strptime(date, "%Y-%m-%d").date()
-    
+
     deleted = db.query(Projection).filter(
         Projection.task_id == task_id,
         Projection.due_date == projection_date
     ).delete()
-    
-    db.commit()
-    
+
     if deleted == 0:
         raise HTTPException(status_code=404, detail="Projection not found")
-    
+
+    if not db.query(ProjectionExclusion).filter(
+        ProjectionExclusion.task_id == task_id,
+        ProjectionExclusion.due_date == projection_date,
+    ).first():
+        db.add(ProjectionExclusion(task_id=task_id, due_date=projection_date))
+
+    db.commit()
+
     return {"status": "ok", "deleted": deleted}
 
 
@@ -800,6 +839,14 @@ async def delete_confirm_modal(request: Request, task_id: str, db: Session = Dep
 
 @router.post("/{task_id}/delete-instance")
 async def delete_task_instance(task_id: str, db: Session = Depends(get_db)):
+    """
+    "Delete today only" from the recurring-delete-modal flow.
+
+    Records a ProjectionExclusion tombstone (like /week/projection/{task_id})
+    so today's occurrence isn't resurrected by a later projection
+    regeneration. Undo removes the tombstone again — see
+    app/routers/undo.py::_undo_delete_instance.
+    """
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -812,6 +859,12 @@ async def delete_task_instance(task_id: str, db: Session = Depends(get_db)):
 
     if deleted == 0:
         raise HTTPException(status_code=404, detail="No projection for today")
+
+    if not db.query(ProjectionExclusion).filter(
+        ProjectionExclusion.task_id == task_id,
+        ProjectionExclusion.due_date == today,
+    ).first():
+        db.add(ProjectionExclusion(task_id=task_id, due_date=today))
 
     task_title = task.title
     log = ActionLog(
@@ -853,6 +906,7 @@ async def delete_task(request: Request, task_id: str, db: Session = Depends(get_
     ))
 
     db.query(Projection).filter(Projection.task_id == task_id).delete()
+    db.query(ProjectionExclusion).filter(ProjectionExclusion.task_id == task_id).delete()
     db.query(Recurrence).filter(Recurrence.task_id == task_id).delete()
     db.delete(task)
 

@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 from sqlalchemy.orm import Session
 
-from app.models.recurrence import Recurrence, Projection
+from app.models.recurrence import Recurrence, Projection, ProjectionExclusion
 
 
 def parse_day_list(day_string: str | None) -> list[int]:
@@ -19,14 +19,28 @@ def generate_projections(
 ) -> list[Projection]:
     """
     Generate projection entries for a recurrence rule between start and end dates.
+
+    Dates recorded in ProjectionExclusion (an occurrence the user deliberately
+    removed via "delete today only" / the week-view instance delete) are
+    skipped, so regenerating projections never resurrects a deliberate
+    deletion. `db` is optional — pure date-math tests call this with db=None
+    and get no exclusion filtering, matching prior behaviour.
     """
     projections = []
     current = start_date
-    
+
     days_of_week = parse_day_list(recurrence.day_of_week)
     days_of_month = parse_day_list(recurrence.day_of_month)
     months_of_year = parse_day_list(recurrence.month_of_year)
-    
+
+    excluded_dates: set[date] = set()
+    if db is not None:
+        excluded_dates = {
+            row.due_date for row in db.query(ProjectionExclusion.due_date)
+            .filter(ProjectionExclusion.task_id == recurrence.task_id)
+            .all()
+        }
+
     while current <= end_date:
         should_add = False
         
@@ -73,7 +87,7 @@ def generate_projections(
                         current.day == recurrence.start_date.day
                     )
         
-        if should_add:
+        if should_add and current not in excluded_dates:
             projection = Projection(task_id=recurrence.task_id, due_date=current)
             projections.append(projection)
         

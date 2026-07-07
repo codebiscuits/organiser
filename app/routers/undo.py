@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.action_log import ActionLog
 from app.models.task import Task, CompletedTask
-from app.models.recurrence import Recurrence, Projection
+from app.models.recurrence import Recurrence, Projection, ProjectionExclusion
 from app.models.workout import PerformedSet
 from app.services.undo import task_from_dict, apply_task_dict
 
@@ -129,6 +129,14 @@ def _undo_delete_instance(log, db):
         ).first()
         if not exists:
             db.add(Projection(task_id=log.task_id, due_date=d))
+
+        # The delete recorded a ProjectionExclusion tombstone so regeneration
+        # wouldn't resurrect it; undoing the delete means that tombstone no
+        # longer applies.
+        db.query(ProjectionExclusion).filter(
+            ProjectionExclusion.task_id == log.task_id,
+            ProjectionExclusion.due_date == d,
+        ).delete()
 
 
 def _undo_delete(log, db):
