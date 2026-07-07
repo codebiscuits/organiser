@@ -597,6 +597,28 @@ main {
     color: var(--text-secondary);
 }
 
+.date-input-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.date-input-row input {
+    flex: 1;
+    min-width: 0;
+}
+
+.date-weekday {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    min-width: 2rem;
+    white-space: nowrap;
+}
+
+.duplicate-title-warning {
+    color: var(--warning);
+}
+
 .checkbox-group label {
     display: flex;
     align-items: center;

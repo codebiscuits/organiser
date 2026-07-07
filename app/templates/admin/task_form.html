@@ -71,8 +71,23 @@ function taskForm() {
                 day_of_week: '{{ recurrence.day_of_week if recurrence and recurrence.day_of_week else '' }}',
                 day_of_month: '{{ recurrence.day_of_month if recurrence and recurrence.day_of_month else '' }}',
                 month_of_year: '{{ recurrence.month_of_year if recurrence and recurrence.month_of_year else '' }}',
-                start_date: '{{ recurrence.start_date.strftime("%Y-%m-%d") if recurrence and recurrence.start_date else '' }}',
+                start_date: '{{ recurrence.start_date.strftime("%Y-%m-%d") if recurrence and recurrence.start_date else '' }}' || todayIsoDate(),
                 end_date: '{{ recurrence.end_date.strftime("%Y-%m-%d") if recurrence and recurrence.end_date else '' }}'
+            }
+        },
+        titleDuplicateWarning: false,
+        async checkTitleDuplicate() {
+            const title = (this.form.title || '').trim();
+            if (!title) { this.titleDuplicateWarning = false; return; }
+            try {
+                const params = new URLSearchParams({ title });
+                {% if task %}params.set('exclude_id', '{{ task.id }}');{% endif %}
+                const resp = await fetch('/tasks/check-title?' + params);
+                if (!resp.ok) return;
+                const data = await resp.json();
+                this.titleDuplicateWarning = !!data.duplicate;
+            } catch (err) {
+                // Non-critical check — ignore network errors rather than blocking the form.
             }
         },
         showUrgency() {

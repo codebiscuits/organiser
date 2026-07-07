@@ -31,7 +31,11 @@ Optional:
 <!-- Common Fields -->
 <div class="form-group">
     <label for="title">Title</label>
-    <input type="text" id="title" x-model="form.title" {% if useFormNames %}name="title"{% endif %} required placeholder="Task title">
+    <input type="text" id="title" x-model="form.title" {% if useFormNames %}name="title"{% endif %} required
+           placeholder="Task title" @blur="checkTitleDuplicate()">
+    <span class="form-hint duplicate-title-warning" x-show="titleDuplicateWarning" x-cloak>
+        A task called &ldquo;<span x-text="form.title"></span>&rdquo; already exists
+    </span>
 </div>
 
 <div class="form-group">
@@ -72,8 +76,11 @@ Optional:
     <div class="type-specific-fields">
         <div class="form-group">
             <label for="scheduled_at">Scheduled Date & Time</label>
-            <input type="datetime-local" id="scheduled_at" x-model="form.scheduled_at" 
-                   {% if useFormNames %}name="scheduled_at"{% endif %} required>
+            <div class="date-input-row">
+                <input type="datetime-local" id="scheduled_at" x-model="form.scheduled_at"
+                       {% if useFormNames %}name="scheduled_at"{% endif %} required>
+                <span class="date-weekday" x-text="weekdayShort(form.scheduled_at)"></span>
+            </div>
         </div>
         
         <div class="form-group">
@@ -121,8 +128,11 @@ Optional:
     <div class="type-specific-fields">
         <div class="form-group">
             <label for="deadline_at">Deadline Date & Time</label>
-            <input type="datetime-local" id="deadline_at" x-model="form.deadline_at" 
-                   {% if useFormNames %}name="deadline_at"{% endif %} required>
+            <div class="date-input-row">
+                <input type="datetime-local" id="deadline_at" x-model="form.deadline_at"
+                       {% if useFormNames %}name="deadline_at"{% endif %} required>
+                <span class="date-weekday" x-text="weekdayShort(form.deadline_at)"></span>
+            </div>
         </div>
         <span class="form-hint">Urgency is calculated automatically based on time remaining</span>
     </div>
@@ -179,14 +189,20 @@ Optional:
 
         <div class="form-group">
             <label for="start_date">Start Date</label>
-            <input type="date" id="start_date" x-model="form.recurrence.start_date"
-                   {% if useFormNames %}name="start_date"{% endif %}>
+            <div class="date-input-row">
+                <input type="date" id="start_date" x-model="form.recurrence.start_date"
+                       {% if useFormNames %}name="start_date"{% endif %}>
+                <span class="date-weekday" x-text="weekdayShort(form.recurrence.start_date)"></span>
+            </div>
         </div>
 
         <div class="form-group">
             <label for="end_date">End Date (optional)</label>
-            <input type="date" id="end_date" x-model="form.recurrence.end_date"
-                   {% if useFormNames %}name="end_date"{% endif %}>
+            <div class="date-input-row">
+                <input type="date" id="end_date" x-model="form.recurrence.end_date"
+                       {% if useFormNames %}name="end_date"{% endif %}>
+                <span class="date-weekday" x-text="weekdayShort(form.recurrence.end_date)"></span>
+            </div>
         </div>
 
         <div class="form-group">
@@ -224,8 +240,11 @@ Optional:
 
         <div class="form-group">
             <label for="start_date">First occurrence</label>
-            <input type="date" id="start_date" x-model="form.recurrence.start_date"
-                   {% if useFormNames %}name="start_date"{% endif %}>
+            <div class="date-input-row">
+                <input type="date" id="start_date" x-model="form.recurrence.start_date"
+                       {% if useFormNames %}name="start_date"{% endif %}>
+                <span class="date-weekday" x-text="weekdayShort(form.recurrence.start_date)"></span>
+            </div>
             <span class="form-hint">Defaults to today if not set</span>
         </div>
     </div>

@@ -94,6 +94,25 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
+// Returns today's date as YYYY-MM-DD in local time, suitable for a
+// <input type="date"> default value.
+function todayIsoDate() {
+    return new Date().toLocaleDateString('en-CA');
+}
+
+// Weekday label (e.g. "Wed") for a date or datetime-local input's string
+// value. Used to show the day-of-week beside date pickers in task forms.
+// Handles both "YYYY-MM-DD" (date) and "YYYY-MM-DDTHH:MM" (datetime-local)
+// values; date-only strings are forced to local-midnight parsing so they
+// don't shift a day in negative UTC offsets.
+function weekdayShort(value) {
+    if (!value) return '';
+    const dt = value.length <= 10 ? value + 'T00:00:00' : value;
+    const d = new Date(dt);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString(undefined, { weekday: 'short' });
+}
+
 // Alpine.js countdown component for deadline tasks
 document.addEventListener('alpine:init', () => {
     Alpine.data('countdown', (deadline) => ({

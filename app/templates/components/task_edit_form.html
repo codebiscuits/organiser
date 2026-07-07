@@ -6,6 +6,19 @@
     notificationRows: {{ task.notification_offsets | tojson }}.map(
         o => o === 0 ? { mode: 'at', minutes: 15 } : { mode: 'before', minutes: o }
     ),
+    titleDuplicateWarning: false,
+    async checkTitleDuplicate() {
+        const title = (this.form.title || '').trim();
+        if (!title) { this.titleDuplicateWarning = false; return; }
+        try {
+            const resp = await fetch('/tasks/check-title?' + new URLSearchParams({ title, exclude_id: '{{ task.id }}' }));
+            if (!resp.ok) return;
+            const data = await resp.json();
+            this.titleDuplicateWarning = !!data.duplicate;
+        } catch (err) {
+            // Non-critical check — ignore network errors rather than blocking the form.
+        }
+    },
     form: {
         type: '{{ task.type }}',
         title: '{{ task.title | e }}',
@@ -25,7 +38,7 @@
             day_of_week: {{ ('\"' ~ recurrence.day_of_week ~ '\"') if recurrence and recurrence.day_of_week else 'null' }},
             day_of_month: {{ recurrence.day_of_month or 'null' }},
             month_of_year: {{ recurrence.month_of_year or 'null' }},
-            start_date: {{ ('\"' ~ recurrence.start_date.strftime('%Y-%m-%d') ~ '\"') if recurrence and recurrence.start_date else 'null' }},
+            start_date: {{ ('\"' ~ recurrence.start_date.strftime('%Y-%m-%d') ~ '\"') if recurrence and recurrence.start_date else 'todayIsoDate()' }},
             end_date: {{ ('\"' ~ recurrence.end_date.strftime('%Y-%m-%d') ~ '\"') if recurrence and recurrence.end_date else 'null' }}
         }
     },

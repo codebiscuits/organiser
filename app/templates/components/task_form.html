@@ -8,6 +8,19 @@
     selectedPresetId: '',
     presetName: '',
     showPresetSave: false,
+    titleDuplicateWarning: false,
+    async checkTitleDuplicate() {
+        const title = (this.form.title || '').trim();
+        if (!title) { this.titleDuplicateWarning = false; return; }
+        try {
+            const resp = await fetch('/tasks/check-title?' + new URLSearchParams({ title }));
+            if (!resp.ok) return;
+            const data = await resp.json();
+            this.titleDuplicateWarning = !!data.duplicate;
+        } catch (err) {
+            // Non-critical check — ignore network errors rather than blocking the form.
+        }
+    },
     form: {
         type: '',
         title: '',
@@ -27,7 +40,7 @@
             day_of_week: null,
             day_of_month: null,
             month_of_year: null,
-            start_date: null,
+            start_date: todayIsoDate(),
             end_date: null
         }
     },
