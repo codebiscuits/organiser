@@ -36,14 +36,65 @@
                     {% endif %}
                 </div>
                 <div class="task-row-actions">
+                    {% if task.type == 'workout' %}
+                    <button
+                        class="btn-done"
+                        hx-get="/tasks/{{ task.id }}/complete/workout"
+                        hx-target="body"
+                        hx-swap="beforeend"
+                        title="Done"
+                    >Done</button>
+                    {% elif task.type == 'variable_recurring' %}
+                    <button
+                        class="btn-done"
+                        hx-get="/tasks/{{ task.id }}/complete/variable"
+                        hx-target="body"
+                        hx-swap="beforeend"
+                        title="Done"
+                    >Done</button>
+                    {% elif task.type == 'recurring' %}
+                    <button
+                        class="btn-done"
+                        hx-post="/tasks/{{ task.id }}/complete"
+                        hx-swap="none"
+                        hx-on::after-request="handleUndoHeader(event.detail.xhr)"
+                        title="Done (clears today's occurrence only — task recurs again)"
+                    >Done</button>
+                    {% else %}
+                    <button
+                        class="btn-done"
+                        hx-post="/tasks/{{ task.id }}/complete"
+                        hx-target="#task-{{ task.id }}"
+                        hx-swap="outerHTML"
+                        hx-on::after-request="handleUndoHeader(event.detail.xhr)"
+                        title="Done"
+                    >Done</button>
+                    {% endif %}
+                    <button
+                        class="btn-defer"
+                        hx-post="/tasks/{{ task.id }}/defer"
+                        hx-swap="none"
+                        hx-on::after-request="handleUndoHeader(event.detail.xhr)"
+                        title="Defer to tomorrow"
+                    >Defer</button>
                     <a href="/admin/tasks/{{ task.id }}/edit" class="btn-edit">Edit</a>
-                    <button 
+                    {% if task.type in ('recurring', 'variable_recurring', 'workout') %}
+                    <button
+                        class="btn-delete"
+                        hx-get="/tasks/{{ task.id }}/delete-confirm"
+                        hx-target="body"
+                        hx-swap="beforeend"
+                        title="Delete"
+                    >Delete</button>
+                    {% else %}
+                    <button
                         class="btn-delete"
                         hx-delete="/admin/tasks/{{ task.id }}"
                         hx-target="#task-{{ task.id }}"
                         hx-swap="outerHTML"
                         hx-confirm="Delete '{{ task.title }}'?"
                     >Delete</button>
+                    {% endif %}
                 </div>
             </div>
             {% endfor %}
@@ -132,6 +183,36 @@
 .btn-edit:hover {
     background: var(--accent);
     color: white;
+}
+
+.task-row-actions .btn-done,
+.task-row-actions .btn-defer {
+    padding: 0.375rem 0.75rem;
+    border-radius: 6px;
+    background: transparent;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+
+.task-row-actions .btn-done {
+    border: 1px solid var(--success);
+    color: var(--success);
+}
+
+.task-row-actions .btn-done:hover {
+    background: var(--success);
+    color: var(--text-on-accent);
+}
+
+.task-row-actions .btn-defer {
+    border: 1px solid var(--text-secondary);
+    color: var(--text-secondary);
+}
+
+.task-row-actions .btn-defer:hover {
+    border-color: var(--warning);
+    color: var(--warning);
 }
 </style>
 {% endblock %}
