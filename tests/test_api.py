@@ -408,6 +408,66 @@ class TestDeleteInstance:
         resp = client.post(f"/tasks/{task_id}/delete-instance")
         assert resp.status_code == 404
 
+    def test_delete_instance_not_resurrected_by_regeneration(self, client, db):
+        """
+        Regression test: "delete today only" must survive a projection
+        regeneration (e.g. the periodic refresh job, or the admin
+        regenerate-all endpoint) — the deleted occurrence should not
+        reappear.
+        """
+        from app.models.recurrence import ProjectionExclusion
+
+        task_id = self._task_with_todays_projection(client, db)
+
+        resp = client.post(f"/tasks/{task_id}/delete-instance")
+        assert resp.status_code == 200
+        assert db.query(Projection).filter(
+            Projection.task_id == task_id, Projection.due_date == date.today()
+        ).first() is None
+        assert db.query(ProjectionExclusion).filter(
+            ProjectionExclusion.task_id == task_id, ProjectionExclusion.due_date == date.today()
+        ).first() is not None
+
+        # Regenerate everything, as the admin "regenerate all" endpoint does.
+        resp = client.post("/admin/refresh-projections")
+        assert resp.status_code == 200
+
+        still_gone = db.query(Projection).filter(
+            Projection.task_id == task_id, Projection.due_date == date.today()
+        ).first()
+        assert still_gone is None, "today's deleted occurrence was resurrected by regeneration"
+
+    def test_undo_delete_instance_then_regeneration_recreates_it(self, client, db):
+        """
+        Undoing a "delete today only" should clear the tombstone too, so a
+        later regeneration behaves as if the deletion never happened.
+        """
+        from app.models.action_log import ActionLog
+        from app.models.recurrence import ProjectionExclusion
+
+        task_id = self._task_with_todays_projection(client, db)
+        client.post(f"/tasks/{task_id}/delete-instance")
+
+        log = db.query(ActionLog).filter(
+            ActionLog.task_id == task_id,
+            ActionLog.action_type == "delete_instance",
+        ).first()
+        client.post(f"/undo/{log.id}")
+
+        assert db.query(Projection).filter(
+            Projection.task_id == task_id, Projection.due_date == date.today()
+        ).first() is not None
+        assert db.query(ProjectionExclusion).filter(
+            ProjectionExclusion.task_id == task_id, ProjectionExclusion.due_date == date.today()
+        ).first() is None
+
+        # A regeneration after the undo should keep (or recreate) today's
+        # occurrence rather than treating it as excluded.
+        client.post("/admin/refresh-projections")
+        assert db.query(Projection).filter(
+            Projection.task_id == task_id, Projection.due_date == date.today()
+        ).first() is not None
+
 
 # ---------------------------------------------------------------------------
 # Variable recurring completion
@@ -650,6 +710,55 @@ class TestDeleteProjection:
             params={"date": "2099-12-31"},
         )
         assert resp.status_code == 404
+
+    def test_deleted_projection_not_resurrected_by_regeneration(self, client, db):
+        """
+        Regression test for the projection-resurrection bug: deleting one
+        occurrence via the week view must survive a later regeneration
+        (periodic refresh job / admin regenerate-all), not just the moment
+        of deletion.
+
+        Uses a recurrence starting today (rather than the module's
+        RECURRING_PAYLOAD, whose fixed start_date is in the past) so the
+        deleted occurrence falls inside admin/refresh-projections' actual
+        regeneration window (today onward).
+        """
+        from app.models.recurrence import ProjectionExclusion
+
+        task = Task(type="recurring", title="Daily task", importance=2, status="pending")
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        recurrence = Recurrence(
+            task_id=task.id, interval_type="daily", interval_multiple=1, start_date=date.today(),
+        )
+        db.add(recurrence)
+        db.commit()
+        client.post("/admin/refresh-projections")
+
+        target_date = date.today() + timedelta(days=3)
+        assert db.query(Projection).filter(
+            Projection.task_id == task.id, Projection.due_date == target_date
+        ).first() is not None
+
+        resp = client.delete(
+            f"/tasks/week/projection/{task.id}",
+            params={"date": target_date.isoformat()},
+        )
+        assert resp.status_code == 200
+        assert db.query(ProjectionExclusion).filter(
+            ProjectionExclusion.task_id == task.id,
+            ProjectionExclusion.due_date == target_date,
+        ).first() is not None
+
+        resp = client.post("/admin/refresh-projections")
+        assert resp.status_code == 200
+
+        resurrected = db.query(Projection).filter(
+            Projection.task_id == task.id,
+            Projection.due_date == target_date,
+        ).first()
+        assert resurrected is None, "deleted occurrence was resurrected by regeneration"
 
 
 # ---------------------------------------------------------------------------

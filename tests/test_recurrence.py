@@ -9,7 +9,7 @@ import pytest
 from datetime import date, timedelta
 
 from app.models.task import Task
-from app.models.recurrence import Recurrence, Projection
+from app.models.recurrence import Recurrence, Projection, ProjectionExclusion
 from app.services.recurrence import generate_projections, refresh_projections, parse_day_list
 
 
@@ -288,6 +288,83 @@ class TestRefreshProjections:
         count_second = db.query(Projection).filter(Projection.task_id == task.id).count()
 
         assert count_first == count_second
+
+    def test_excluded_date_not_resurrected_on_regeneration(self, db):
+        """
+        Regression test for the projection-resurrection bug: once an
+        occurrence has been explicitly deleted (recorded as a
+        ProjectionExclusion tombstone, as the /week/projection and
+        /delete-instance routes now do), regenerating projections for the
+        same recurrence must not recreate it.
+        """
+        task = Task(type="recurring", title="Daily task", importance=2, status="pending")
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        recurrence = Recurrence(
+            task_id=task.id,
+            interval_type="daily",
+            interval_multiple=1,
+            start_date=date.today(),
+        )
+        db.add(recurrence)
+        db.commit()
+
+        refresh_projections(db, months_ahead=1)
+
+        excluded_date = date.today() + timedelta(days=3)
+        assert db.query(Projection).filter(
+            Projection.task_id == task.id, Projection.due_date == excluded_date
+        ).first() is not None
+
+        # Simulate the user deleting that one occurrence: hard-delete the
+        # projection row and record the tombstone, exactly as the
+        # DELETE /tasks/week/projection/{task_id} route does.
+        db.query(Projection).filter(
+            Projection.task_id == task.id, Projection.due_date == excluded_date
+        ).delete()
+        db.add(ProjectionExclusion(task_id=task.id, due_date=excluded_date))
+        db.commit()
+
+        # Regenerate — as refresh_projections (periodic job) or the admin
+        # "regenerate all" endpoint would.
+        refresh_projections(db, months_ahead=1)
+
+        resurrected = db.query(Projection).filter(
+            Projection.task_id == task.id, Projection.due_date == excluded_date
+        ).first()
+        assert resurrected is None, "excluded date was resurrected by regeneration"
+
+        # Every other date in the window is unaffected.
+        other_count = db.query(Projection).filter(
+            Projection.task_id == task.id, Projection.due_date != excluded_date
+        ).count()
+        assert other_count >= 20
+
+    def test_generate_projections_respects_exclusion_directly(self, db):
+        """Unit-level check on generate_projections itself (not via refresh_projections)."""
+        task = Task(type="recurring", title="T", importance=2, status="pending")
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        recurrence = Recurrence(
+            task_id=task.id,
+            interval_type="daily",
+            interval_multiple=1,
+            start_date=date(2026, 1, 1),
+        )
+        db.add(recurrence)
+        db.commit()
+
+        db.add(ProjectionExclusion(task_id=task.id, due_date=date(2026, 1, 3)))
+        db.commit()
+
+        projections = generate_projections(db, recurrence, date(2026, 1, 1), date(2026, 1, 5))
+        dates = {p.due_date for p in projections}
+        assert date(2026, 1, 3) not in dates
+        assert dates == {date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 4), date(2026, 1, 5)}
 
 
 # ---------------------------------------------------------------------------
