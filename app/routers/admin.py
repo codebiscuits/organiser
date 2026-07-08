@@ -8,8 +8,8 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
-from app.models.recurrence import Projection, ProjectionExclusion, Recurrence
-from app.services.recurrence import generate_projections, refresh_projections
+from app.models.recurrence import Projection, Recurrence
+from app.services.recurrence import generate_projections, refresh_projections, delete_task_children
 from datetime import timedelta
 from app.models.task import CompletedTask, Task
 from app.models.preset import TaskPreset
@@ -66,13 +66,23 @@ async def admin_tasks(
     db: Session = Depends(get_db),
     type: Optional[str] = None,
 ):
+    """
+    Admin task list.
+
+    A plain browser navigation gets the full page. An htmx request (used by
+    the taskUpdated-from:body listener on #task-list — see admin/tasks.html
+    and finding 2 in the review notes) gets just the row fragment, so a
+    Done/Defer/Delete action elsewhere in the app can refresh this list
+    in place instead of leaving a stale row until the next full reload.
+    """
     query = db.query(Task)
     if type:
         query = query.filter(Task.type == type)
     tasks = query.order_by(Task.created_at.desc()).all()
+    template_name = "admin/_task_rows.html" if request.headers.get("hx-request") else "admin/tasks.html"
     return templates.TemplateResponse(
         request,
-        "admin/tasks.html",
+        template_name,
         {"tasks": tasks, "filter_type": type},
     )
 
@@ -250,8 +260,11 @@ async def admin_task_update(
         for projection in projections:
             db.add(projection)
     elif existing_recurrence:
-        db.delete(existing_recurrence)
-        db.query(Projection).filter(Projection.task_id == task_id).delete()
+        # Switching away from a recurring type: tear down Recurrence AND
+        # Projection AND ProjectionExclusion. Leaving exclusion tombstones
+        # behind here used to silently suppress those dates if the task was
+        # ever made recurring again later (review finding 6).
+        delete_task_children(db, task_id)
 
     db.commit()
     return RedirectResponse(url="/admin/tasks", status_code=303)
@@ -261,9 +274,7 @@ async def admin_task_update(
 async def admin_task_delete(task_id: str, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id).first()
     if task:
-        db.query(Recurrence).filter(Recurrence.task_id == task_id).delete()
-        db.query(Projection).filter(Projection.task_id == task_id).delete()
-        db.query(ProjectionExclusion).filter(ProjectionExclusion.task_id == task_id).delete()
+        delete_task_children(db, task_id)
         db.delete(task)
         db.commit()
     return Response(status_code=200)

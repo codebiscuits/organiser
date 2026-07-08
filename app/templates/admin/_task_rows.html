@@ -1,0 +1,30 @@
+{#
+    Task-row fragment for the admin task list.
+
+    Included by admin/tasks.html for the initial full-page render, and
+    returned directly by GET /admin/tasks when called via htmx (detected by
+    the hx-request header — see admin_tasks in app/routers/admin.py) so the
+    taskUpdated-from:body listener on #task-list can refresh in place.
+#}
+{% from "components/_task_action_macros.html" import done_button, defer_button, delete_button %}
+{% if tasks %}
+    {% for task in tasks %}
+    <div class="task-row" id="task-{{ task.id }}">
+        <div class="task-info">
+            <span class="task-type-badge task-type-{{ task.type }}">{{ task.type }}</span>
+            <span class="task-title">{{ task.title }}</span>
+            {% if task.estimated_duration %}
+            <span class="task-duration">{{ task.estimated_duration }} min</span>
+            {% endif %}
+        </div>
+        <div class="task-row-actions">
+            {{ done_button(task, 'btn-done', 'Done', recurring_title="Done (clears today's occurrence only — task recurs again)") }}
+            {{ defer_button(task, 'btn-defer', 'Defer', title='Defer to tomorrow') }}
+            <a href="/admin/tasks/{{ task.id }}/edit" class="btn-edit">Edit</a>
+            {{ delete_button(task, 'btn-delete', 'Delete', '/admin/tasks/' ~ task.id) }}
+        </div>
+    </div>
+    {% endfor %}
+{% else %}
+    <p class="no-tasks">No tasks found.</p>
+{% endif %}

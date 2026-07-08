@@ -24,83 +24,14 @@
         </div>
     </div>
 
-    <div class="task-list" id="task-list">
-        {% if tasks %}
-            {% for task in tasks %}
-            <div class="task-row" id="task-{{ task.id }}">
-                <div class="task-info">
-                    <span class="task-type-badge task-type-{{ task.type }}">{{ task.type }}</span>
-                    <span class="task-title">{{ task.title }}</span>
-                    {% if task.estimated_duration %}
-                    <span class="task-duration">{{ task.estimated_duration }} min</span>
-                    {% endif %}
-                </div>
-                <div class="task-row-actions">
-                    {% if task.type == 'workout' %}
-                    <button
-                        class="btn-done"
-                        hx-get="/tasks/{{ task.id }}/complete/workout"
-                        hx-target="body"
-                        hx-swap="beforeend"
-                        title="Done"
-                    >Done</button>
-                    {% elif task.type == 'variable_recurring' %}
-                    <button
-                        class="btn-done"
-                        hx-get="/tasks/{{ task.id }}/complete/variable"
-                        hx-target="body"
-                        hx-swap="beforeend"
-                        title="Done"
-                    >Done</button>
-                    {% elif task.type == 'recurring' %}
-                    <button
-                        class="btn-done"
-                        hx-post="/tasks/{{ task.id }}/complete"
-                        hx-swap="none"
-                        hx-on::after-request="handleUndoHeader(event.detail.xhr)"
-                        title="Done (clears today's occurrence only — task recurs again)"
-                    >Done</button>
-                    {% else %}
-                    <button
-                        class="btn-done"
-                        hx-post="/tasks/{{ task.id }}/complete"
-                        hx-target="#task-{{ task.id }}"
-                        hx-swap="outerHTML"
-                        hx-on::after-request="handleUndoHeader(event.detail.xhr)"
-                        title="Done"
-                    >Done</button>
-                    {% endif %}
-                    <button
-                        class="btn-defer"
-                        hx-post="/tasks/{{ task.id }}/defer"
-                        hx-swap="none"
-                        hx-on::after-request="handleUndoHeader(event.detail.xhr)"
-                        title="Defer to tomorrow"
-                    >Defer</button>
-                    <a href="/admin/tasks/{{ task.id }}/edit" class="btn-edit">Edit</a>
-                    {% if task.type in ('recurring', 'variable_recurring', 'workout') %}
-                    <button
-                        class="btn-delete"
-                        hx-get="/tasks/{{ task.id }}/delete-confirm"
-                        hx-target="body"
-                        hx-swap="beforeend"
-                        title="Delete"
-                    >Delete</button>
-                    {% else %}
-                    <button
-                        class="btn-delete"
-                        hx-delete="/admin/tasks/{{ task.id }}"
-                        hx-target="#task-{{ task.id }}"
-                        hx-swap="outerHTML"
-                        hx-confirm="Delete '{{ task.title }}'?"
-                    >Delete</button>
-                    {% endif %}
-                </div>
-            </div>
-            {% endfor %}
-        {% else %}
-            <p class="no-tasks">No tasks found.</p>
-        {% endif %}
+    <div
+        class="task-list"
+        id="task-list"
+        hx-get="/admin/tasks{% if filter_type %}?type={{ filter_type }}{% endif %}"
+        hx-trigger="taskUpdated from:body"
+        hx-swap="innerHTML"
+    >
+        {% include "admin/_task_rows.html" %}
     </div>
 </section>
 

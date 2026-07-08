@@ -1,0 +1,82 @@
+{#
+    Shared per-type task action button branching.
+
+    Both the daily-list "mini" cards (task_list.html) and the admin task
+    list (admin/tasks.html) need to route the "Done" button to a different
+    endpoint depending on task.type (workout / variable_recurring both need
+    a completion modal; everything else completes directly), and route
+    "Delete" to a confirm modal for recurring-family types vs. a direct
+    delete for one-shot types. That branching used to be duplicated almost
+    verbatim in both templates (review finding 2 / cleanup item 10) — kept
+    here in one place instead.
+
+    Every button that mutates task state fires an explicit
+    htmx.trigger(document.body, 'taskUpdated') from hx-on::after-request
+    rather than relying on the HX-Trigger response header alone — see
+    project memory: the header-only approach is unreliable in this app.
+#}
+
+{% macro done_button(task, class_name, label, recurring_title=none) %}
+{% if task.type == 'workout' %}
+<button
+    class="{{ class_name }}"
+    hx-get="/tasks/{{ task.id }}/complete/workout"
+    hx-trigger="click"
+    hx-target="body"
+    hx-swap="beforeend"
+    title="Done"
+>{{ label }}</button>
+{% elif task.type == 'variable_recurring' %}
+<button
+    class="{{ class_name }}"
+    hx-get="/tasks/{{ task.id }}/complete/variable"
+    hx-trigger="click"
+    hx-target="body"
+    hx-swap="beforeend"
+    title="Done"
+>{{ label }}</button>
+{% else %}
+<button
+    class="{{ class_name }}"
+    hx-post="/tasks/{{ task.id }}/complete"
+    hx-trigger="click"
+    hx-swap="none"
+    hx-on::after-request="htmx.trigger(document.body, 'taskUpdated'); handleUndoHeader(event.detail.xhr)"
+    title="{{ recurring_title if (task.type == 'recurring' and recurring_title) else 'Done' }}"
+>{{ label }}</button>
+{% endif %}
+{% endmacro %}
+
+{% macro defer_button(task, class_name, label, title='Defer') %}
+<button
+    class="{{ class_name }}"
+    hx-post="/tasks/{{ task.id }}/defer"
+    hx-trigger="click"
+    hx-swap="none"
+    hx-on::after-request="htmx.trigger(document.body, 'taskUpdated'); handleUndoHeader(event.detail.xhr)"
+    title="{{ title }}"
+>{{ label }}</button>
+{% endmacro %}
+
+{% macro delete_button(task, class_name, label, delete_url) %}
+{% if task.type in ('recurring', 'variable_recurring', 'workout') %}
+<button
+    class="{{ class_name }}"
+    hx-get="/tasks/{{ task.id }}/delete-confirm"
+    hx-trigger="click"
+    hx-target="body"
+    hx-swap="beforeend"
+    title="Delete"
+>{{ label }}</button>
+{% else %}
+<button
+    class="{{ class_name }}"
+    hx-delete="{{ delete_url }}"
+    hx-trigger="click"
+    hx-swap="none"
+    hx-confirm="Delete '{{ task.title }}'?"
+    hx-on::after-request="htmx.trigger(document.body, 'taskUpdated'); handleUndoHeader(event.detail.xhr)"
+    title="Delete"
+>{{ label }}</button>
+{% endif %}
+{% endmacro %}
