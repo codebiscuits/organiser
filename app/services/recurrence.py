@@ -96,6 +96,30 @@ def generate_projections(
     return projections
 
 
+def delete_task_children(db: Session, task_id: str) -> None:
+    """
+    Delete a task's Projection, ProjectionExclusion, and Recurrence rows.
+
+    Shared by every place that tears down a task's recurrence data: hard
+    delete (tasks.py delete_task), the type-change replacement path
+    (tasks.py _replace_task_for_type_change), and the admin edit path that
+    switches a task away from a recurring type (admin.py admin_task_update)
+    plus the admin hard-delete route (admin.py admin_task_delete).
+
+    Deliberately includes ProjectionExclusion — a caller that only deleted
+    Recurrence + Projection (as admin_task_update's away-from-recurring
+    branch used to) leaves orphaned tombstones behind that silently
+    suppress dates if the task is ever made recurring again.
+
+    Does not delete the Task row itself or other task-keyed rows
+    (TaskTag, TaskNotification) — callers handle those separately since not
+    every call site needs them removed.
+    """
+    db.query(Projection).filter(Projection.task_id == task_id).delete()
+    db.query(ProjectionExclusion).filter(ProjectionExclusion.task_id == task_id).delete()
+    db.query(Recurrence).filter(Recurrence.task_id == task_id).delete()
+
+
 def refresh_projections(db: Session, months_ahead: int = 3):
     """
     Refresh the projection table for all recurring tasks.

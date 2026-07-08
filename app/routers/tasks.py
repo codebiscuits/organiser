@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -13,7 +12,7 @@ from app.models.recurrence import Recurrence, Projection, ProjectionExclusion
 from app.models.action_log import ActionLog
 from app.models.tag import Tag, TaskTag
 from app.models.task_notification import TaskNotification
-from app.services.undo import task_to_dict, recurrence_to_dict, projections_to_list
+from app.services.undo import task_to_dict, recurrence_to_dict, projections_to_list, exclusions_to_list
 from app.schemas.task import (
     TaskCreate,
     TaskUpdate,
@@ -24,7 +23,7 @@ from app.schemas.task import (
 )
 from app.models.workout import PerformedSet
 from app.services.workout_algorithm import select_todays_exercises, get_todays_intensity
-from app.services.recurrence import generate_projections
+from app.services.recurrence import generate_projections, delete_task_children
 from app.services.prioritisation import get_prioritised_tasks_with_metadata
 
 router = APIRouter()
@@ -58,6 +57,72 @@ def _undo_trigger(log_ids: int | list[int], label: str) -> str:
     if isinstance(log_ids, int):
         log_ids = [log_ids]
     return json.dumps({"showUndo": {"ids": log_ids, "label": label}})
+
+
+def _record_exclusion(db: Session, task_id: str, due_date: date) -> None:
+    """
+    Insert a ProjectionExclusion tombstone for (task_id, due_date), unless
+    one already exists — guards against violating the unique constraint if
+    the same occurrence is ever "deleted" more than once.
+    """
+    if not db.query(ProjectionExclusion).filter(
+        ProjectionExclusion.task_id == task_id,
+        ProjectionExclusion.due_date == due_date,
+    ).first():
+        db.add(ProjectionExclusion(task_id=task_id, due_date=due_date))
+
+
+def _build_recurrence_and_projections(db: Session, task_id: str, task_type: str, recurrence_data) -> Recurrence:
+    """
+    Build a Recurrence row for `task_id` from a RecurrenceCreate schema and
+    populate its initial Projection row(s).
+
+    Shared by create_task, _replace_task_for_type_change, and update_task's
+    "newly recurring" branch — all three previously duplicated this
+    Recurrence(...) construction verbatim.
+
+    - recurring/workout: generates a full 90-day window of projections via
+      generate_projections (which itself skips any date already recorded in
+      ProjectionExclusion).
+    - variable_recurring: a single Projection at the anchored start date —
+      its next occurrence is set explicitly by the user on each completion
+      (see complete_variable_recurring_task), not by a recurrence pattern,
+      so there's nothing to generate ahead of time.
+
+    The anchor is max(today, start_date) rather than start_date verbatim,
+    so a recurrence whose start_date is long in the past still produces at
+    least one live projection today onward — a start_date >90 days in the
+    past used to generate zero projections inside [start_date, start_date+90),
+    since that whole window was before today (review finding 9).
+    """
+    recurrence = Recurrence(
+        task_id=task_id,
+        interval_type=recurrence_data.interval_type,
+        interval_multiple=recurrence_data.interval_multiple,
+        day_of_week=recurrence_data.day_of_week,
+        day_of_month=recurrence_data.day_of_month,
+        month_of_year=recurrence_data.month_of_year,
+        start_date=recurrence_data.start_date.date() if recurrence_data.start_date else date.today(),
+        end_date=recurrence_data.end_date.date() if recurrence_data.end_date else None,
+    )
+    db.add(recurrence)
+    db.flush()
+
+    start = max(date.today(), recurrence.start_date) if recurrence.start_date else date.today()
+
+    if task_type in ("recurring", "workout"):
+        end = start + timedelta(days=90)
+        for projection in generate_projections(db, recurrence, start, end):
+            existing = db.query(Projection).filter(
+                Projection.task_id == projection.task_id,
+                Projection.due_date == projection.due_date,
+            ).first()
+            if not existing:
+                db.add(projection)
+    elif task_type == "variable_recurring":
+        db.add(Projection(task_id=task_id, due_date=start))
+
+    return recurrence
 
 
 def auto_complete_overdue_tasks(db: Session) -> list[tuple[int, str]]:
@@ -211,15 +276,22 @@ async def check_title(
     NOTE: registered before /{task_id} — a literal path here would otherwise
     never be reached (FastAPI matches routes in registration order and the
     catch-all /{task_id} would swallow "/check-title" as a task_id).
+
+    NOTE: matching is done in Python (not `func.lower()` in the SQL query)
+    because SQLite's built-in LOWER() only folds case for ASCII characters —
+    a title with an uppercase accented letter (e.g. "CAFÉ") would never
+    match "café" in the database. Python's str.lower() is Unicode-aware.
+    Fine at current scale (see review notes); would want an index/COLLATE
+    strategy if the task table ever got large.
     """
     normalized = title.strip().lower()
     if not normalized:
         return {"duplicate": False}
 
-    query = db.query(Task).filter(func.lower(Task.title) == normalized)
+    query = db.query(Task)
     if exclude_id:
         query = query.filter(Task.id != exclude_id)
-    match = query.first()
+    match = next((t for t in query.all() if t.title.lower() == normalized), None)
     return {"duplicate": match is not None, "title": match.title if match else None}
 
 
@@ -353,18 +425,29 @@ async def week_view(
 async def delete_projection(
     task_id: str,
     date: str,
+    response: Response,
     db: Session = Depends(get_db)
 ):
     """
     Delete a single projection instance (one occurrence of a recurring task).
 
-    Does not delete the task itself, only removes the projection for the specified date.
+    Does not delete the task itself, only removes the projection for the
+    specified date.
 
     Also records a ProjectionExclusion tombstone so a later regeneration
     (refresh_projections, admin's regenerate-all, etc.) doesn't resurrect
     this specific occurrence — see app/services/recurrence.py.
+
+    Logs the action and returns an undo trigger, same as the sibling
+    /{task_id}/delete-instance route (which does the identical thing but is
+    hardcoded to today's date). This route previously had no ActionLog and
+    no undo — a week-view delete was silent and permanent even though the
+    "delete today only" flow from the daily list had a full undo toast.
+    week.html's deleteTask() reads the HX-Trigger header off the raw fetch
+    response itself (it doesn't go through htmx) to show the toast.
     """
     projection_date = datetime.strptime(date, "%Y-%m-%d").date()
+    task = db.query(Task).filter(Task.id == task_id).first()
 
     deleted = db.query(Projection).filter(
         Projection.task_id == task_id,
@@ -374,14 +457,25 @@ async def delete_projection(
     if deleted == 0:
         raise HTTPException(status_code=404, detail="Projection not found")
 
-    if not db.query(ProjectionExclusion).filter(
-        ProjectionExclusion.task_id == task_id,
-        ProjectionExclusion.due_date == projection_date,
-    ).first():
-        db.add(ProjectionExclusion(task_id=task_id, due_date=projection_date))
+    _record_exclusion(db, task_id, projection_date)
+
+    task_title = task.title if task else task_id
+    log = ActionLog(
+        action_type="delete_instance",
+        task_id=task_id,
+        task_title=task_title,
+        projections_snapshot=json.dumps([projection_date.isoformat()]),
+    )
+    db.add(log)
+    _prune_old_logs(db)
+    db.flush()
+    log_id = log.id
 
     db.commit()
 
+    response.headers["HX-Trigger"] = _undo_trigger(
+        log_id, f"'{task_title}' removed from {projection_date.isoformat()}"
+    )
     return {"status": "ok", "deleted": deleted}
 
 
@@ -453,47 +547,8 @@ async def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
     db.add(task)
     db.flush()
 
-    if task_data.type in ("recurring", "workout") and task_data.recurrence:
-        recurrence = Recurrence(
-            task_id=task.id,
-            interval_type=task_data.recurrence.interval_type,
-            interval_multiple=task_data.recurrence.interval_multiple,
-            day_of_week=task_data.recurrence.day_of_week,
-            day_of_month=task_data.recurrence.day_of_month,
-            month_of_year=task_data.recurrence.month_of_year,
-            start_date=task_data.recurrence.start_date.date() if task_data.recurrence.start_date else date.today(),
-            end_date=task_data.recurrence.end_date.date() if task_data.recurrence.end_date else None,
-        )
-        db.add(recurrence)
-        db.flush()
-
-        start = recurrence.start_date or date.today()
-        end = start + timedelta(days=90)
-        projections = generate_projections(db, recurrence, start, end)
-        for projection in projections:
-            existing = db.query(Projection).filter(
-                Projection.task_id == projection.task_id,
-                Projection.due_date == projection.due_date
-            ).first()
-            if not existing:
-                db.add(projection)
-
-    elif task_data.type == "variable_recurring" and task_data.recurrence:
-        recurrence = Recurrence(
-            task_id=task.id,
-            interval_type=task_data.recurrence.interval_type,
-            interval_multiple=task_data.recurrence.interval_multiple,
-            day_of_week=task_data.recurrence.day_of_week,
-            day_of_month=task_data.recurrence.day_of_month,
-            month_of_year=task_data.recurrence.month_of_year,
-            start_date=task_data.recurrence.start_date.date() if task_data.recurrence.start_date else date.today(),
-            end_date=task_data.recurrence.end_date.date() if task_data.recurrence.end_date else None,
-        )
-        db.add(recurrence)
-        db.flush()
-
-        start = recurrence.start_date or date.today()
-        db.add(Projection(task_id=task.id, due_date=start))
+    if task_data.type.value in ("recurring", "workout", "variable_recurring") and task_data.recurrence:
+        _build_recurrence_and_projections(db, task.id, task_data.type.value, task_data.recurrence)
 
     for tag_id in task_data.tag_ids:
         db.add(TaskTag(task_id=task.id, tag_id=tag_id))
@@ -651,6 +706,19 @@ async def complete_variable_recurring_task(
             if next_date.weekday() in python_allowed:
                 break
             next_date += timedelta(days=1)
+
+    # An explicit user-chosen next date overrides a prior single-occurrence
+    # delete: if next_date was previously tombstoned via "delete today only"
+    # / the week-view instance delete, that tombstone no longer applies —
+    # the user just deliberately scheduled the task for this exact date, so
+    # remove it. Without this, the new Projection we're about to add and the
+    # stale Exclusion row would coexist for the same (task_id, due_date)
+    # forever (refresh_projections only ever skips excluded dates, it never
+    # cleans up an exclusion once the projection exists).
+    db.query(ProjectionExclusion).filter(
+        ProjectionExclusion.task_id == task_id,
+        ProjectionExclusion.due_date == next_date,
+    ).delete()
     db.add(Projection(task_id=task_id, due_date=next_date))
 
     log = ActionLog(
@@ -804,7 +872,22 @@ async def defer_task(request: Request, task_id: str, db: Session = Depends(get_d
     ).first()
 
     if today_projection:
-        today_projection.due_date = date.today() + timedelta(days=1)
+        tomorrow = date.today() + timedelta(days=1)
+        tomorrow_projection = db.query(Projection).filter(
+            Projection.task_id == task_id,
+            Projection.due_date == tomorrow,
+        ).first()
+        if tomorrow_projection:
+            # A daily (or otherwise already-generated) recurrence can have
+            # tomorrow's occurrence already sitting in the projection table
+            # (see finding 9 — projections are now generated up to 90 days
+            # from today rather than from a possibly-past start_date), so
+            # moving today's row onto the same date would violate the
+            # (task_id, due_date) unique constraint. Just drop today's row;
+            # tomorrow's own projection already covers it.
+            db.delete(today_projection)
+        else:
+            today_projection.due_date = tomorrow
     else:
         # Errands and deadlines have no projection — snooze them until tomorrow
         task.snooze_until = str(date.today() + timedelta(days=1))
@@ -860,11 +943,7 @@ async def delete_task_instance(task_id: str, db: Session = Depends(get_db)):
     if deleted == 0:
         raise HTTPException(status_code=404, detail="No projection for today")
 
-    if not db.query(ProjectionExclusion).filter(
-        ProjectionExclusion.task_id == task_id,
-        ProjectionExclusion.due_date == today,
-    ).first():
-        db.add(ProjectionExclusion(task_id=task_id, due_date=today))
+    _record_exclusion(db, task_id, today)
 
     task_title = task.title
     log = ActionLog(
@@ -889,7 +968,7 @@ async def delete_task_instance(task_id: str, db: Session = Depends(get_db)):
 async def delete_task(request: Request, task_id: str, db: Session = Depends(get_db)):
     """
     Delete a task entirely.
-    
+
     Does NOT record in completed_tasks (no historical record).
     Also removes associated recurrence rules and projections.
     """
@@ -904,10 +983,15 @@ async def delete_task(request: Request, task_id: str, db: Session = Depends(get_
     proj_snap = json.dumps(projections_to_list(
         db.query(Projection).filter(Projection.task_id == task_id).all()
     ))
+    # Snapshot tombstones too, so undo can restore them (see
+    # app/routers/undo.py::_undo_delete) — without this, deliberately-
+    # skipped occurrences would come back to life the next time projections
+    # regenerate after an undo.
+    excl_snap = json.dumps(exclusions_to_list(
+        db.query(ProjectionExclusion).filter(ProjectionExclusion.task_id == task_id).all()
+    ))
 
-    db.query(Projection).filter(Projection.task_id == task_id).delete()
-    db.query(ProjectionExclusion).filter(ProjectionExclusion.task_id == task_id).delete()
-    db.query(Recurrence).filter(Recurrence.task_id == task_id).delete()
+    delete_task_children(db, task_id)
     db.delete(task)
 
     log = ActionLog(
@@ -917,6 +1001,7 @@ async def delete_task(request: Request, task_id: str, db: Session = Depends(get_
         task_snapshot=task_snap,
         recurrence_snapshot=rec_snap,
         projections_snapshot=proj_snap,
+        exclusions_snapshot=excl_snap,
     )
     db.add(log)
     _prune_old_logs(db)
@@ -979,6 +1064,11 @@ def _replace_task_for_type_change(db: Session, old_task: Task, task_data: TaskUp
     reinstate a deleted task's id, recurrence rows or projections. Rather
     than offer a half-working undo button, a type-change edit simply
     doesn't set X-Undo-Log-Id, so the frontend shows no undo toast for it.
+    Since undo is impossible here anyway, any ActionLog rows still
+    referencing old_task.id are deleted below rather than left dangling —
+    otherwise a stale "complete"/"defer" undo toast from just before the
+    type change could later recreate old_task from its snapshot, producing
+    two live tasks (one under old_task.id, one under new_task.id).
     """
     new_type = task_data.type.value
 
@@ -998,8 +1088,10 @@ def _replace_task_for_type_change(db: Session, old_task: Task, task_data: TaskUp
             detail="Changing this task to a recurring type requires a recurrence rule.",
         )
 
-    existing_tag_ids = [tt.tag_id for tt in db.query(TaskTag).filter(TaskTag.task_id == old_task.id).all()]
-    tag_ids = task_data.tag_ids if task_data.tag_ids is not None else existing_tag_ids
+    if task_data.tag_ids is not None:
+        tag_ids = task_data.tag_ids
+    else:
+        tag_ids = [tt.tag_id for tt in db.query(TaskTag).filter(TaskTag.task_id == old_task.id).all()]
 
     new_task = Task(
         type=new_type,
@@ -1027,42 +1119,19 @@ def _replace_task_for_type_change(db: Session, old_task: Task, task_data: TaskUp
         preset_id=old_task.preset_id,
         allowed_days=task_data.allowed_days if task_data.allowed_days is not None else old_task.allowed_days,
         status="pending",
+        # Carried across unconditionally (not type-specific like the dates
+        # above) — a snoozed/deferred task that gets a type edit should stay
+        # snoozed/deferred, not silently reappear in today's list having
+        # lost its defer weight (prioritisation.py reads all three).
+        snooze_until=old_task.snooze_until,
+        deferred_count=old_task.deferred_count,
+        manual_scheduled_time=old_task.manual_scheduled_time,
     )
     db.add(new_task)
     db.flush()
 
-    if new_type in ("recurring", "workout"):
-        recurrence = Recurrence(
-            task_id=new_task.id,
-            interval_type=task_data.recurrence.interval_type,
-            interval_multiple=task_data.recurrence.interval_multiple,
-            day_of_week=task_data.recurrence.day_of_week,
-            day_of_month=task_data.recurrence.day_of_month,
-            month_of_year=task_data.recurrence.month_of_year,
-            start_date=task_data.recurrence.start_date.date() if task_data.recurrence.start_date else date.today(),
-            end_date=task_data.recurrence.end_date.date() if task_data.recurrence.end_date else None,
-        )
-        db.add(recurrence)
-        db.flush()
-        start = recurrence.start_date or date.today()
-        end = start + timedelta(days=90)
-        for projection in generate_projections(db, recurrence, start, end):
-            db.add(projection)
-    elif new_type == "variable_recurring":
-        recurrence = Recurrence(
-            task_id=new_task.id,
-            interval_type=task_data.recurrence.interval_type,
-            interval_multiple=task_data.recurrence.interval_multiple,
-            day_of_week=task_data.recurrence.day_of_week,
-            day_of_month=task_data.recurrence.day_of_month,
-            month_of_year=task_data.recurrence.month_of_year,
-            start_date=task_data.recurrence.start_date.date() if task_data.recurrence.start_date else date.today(),
-            end_date=task_data.recurrence.end_date.date() if task_data.recurrence.end_date else None,
-        )
-        db.add(recurrence)
-        db.flush()
-        start = recurrence.start_date or date.today()
-        db.add(Projection(task_id=new_task.id, due_date=start))
+    if new_type in ("recurring", "workout", "variable_recurring"):
+        _build_recurrence_and_projections(db, new_task.id, new_type, task_data.recurrence)
 
     for tag_id in tag_ids:
         db.add(TaskTag(task_id=new_task.id, tag_id=tag_id))
@@ -1074,9 +1143,11 @@ def _replace_task_for_type_change(db: Session, old_task: Task, task_data: TaskUp
     # everything keyed to its id.
     db.query(TaskNotification).filter(TaskNotification.task_id == old_task.id).delete()
     db.query(TaskTag).filter(TaskTag.task_id == old_task.id).delete()
-    db.query(Projection).filter(Projection.task_id == old_task.id).delete()
-    db.query(ProjectionExclusion).filter(ProjectionExclusion.task_id == old_task.id).delete()
-    db.query(Recurrence).filter(Recurrence.task_id == old_task.id).delete()
+    delete_task_children(db, old_task.id)
+    # This path offers no undo (see docstring) — any ActionLog entries still
+    # referencing old_task.id would otherwise let a stale undo toast
+    # resurrect it from its snapshot after it's gone, alongside new_task.
+    db.query(ActionLog).filter(ActionLog.task_id == old_task.id).delete()
     db.delete(old_task)
 
     db.commit()
@@ -1105,8 +1176,6 @@ async def update_task(task_id: str, task_data: TaskUpdate, response: Response, d
 
     if task_data.title is not None:
         task.title = task_data.title
-    if task_data.type is not None:
-        task.type = task_data.type.value
     if task_data.notes is not None:
         task.notes = task_data.notes
     if task_data.estimated_duration is not None:
@@ -1156,22 +1225,7 @@ async def update_task(task_id: str, task_data: TaskUpdate, response: Response, d
             # Also generate its projections here — a bare Recurrence row
             # with no Projection rows would never show up in the daily or
             # weekly view.
-            recurrence = Recurrence(
-                task_id=task.id,
-                interval_type=task_data.recurrence.interval_type,
-                interval_multiple=task_data.recurrence.interval_multiple,
-                day_of_week=task_data.recurrence.day_of_week,
-                day_of_month=task_data.recurrence.day_of_month,
-                month_of_year=task_data.recurrence.month_of_year,
-                start_date=task_data.recurrence.start_date.date() if task_data.recurrence.start_date else date.today(),
-                end_date=task_data.recurrence.end_date.date() if task_data.recurrence.end_date else None,
-            )
-            db.add(recurrence)
-            db.flush()
-            start = recurrence.start_date or date.today()
-            end = start + timedelta(days=90)
-            for projection in generate_projections(db, recurrence, start, end):
-                db.add(projection)
+            _build_recurrence_and_projections(db, task.id, task.type, task_data.recurrence)
 
     log = ActionLog(
         action_type="edit",
