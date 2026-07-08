@@ -45,6 +45,10 @@ def projections_to_list(projections) -> list:
     return [p.due_date.isoformat() for p in projections]
 
 
+def exclusions_to_list(exclusions) -> list:
+    return [e.due_date.isoformat() for e in exclusions]
+
+
 def task_from_dict(snap: dict) -> Task:
     return Task(
         id=snap["id"],

@@ -163,3 +163,11 @@ def _undo_delete(log, db):
         db.query(Projection).filter(Projection.task_id == log.task_id).delete()
         for due_date_str in json.loads(log.projections_snapshot):
             db.add(Projection(task_id=log.task_id, due_date=date.fromisoformat(due_date_str)))
+
+    if log.exclusions_snapshot:
+        # Restore ProjectionExclusion tombstones the delete removed, so a
+        # regeneration after undo doesn't resurrect an occurrence the user
+        # had deliberately skipped before deleting the task entirely.
+        db.query(ProjectionExclusion).filter(ProjectionExclusion.task_id == log.task_id).delete()
+        for due_date_str in json.loads(log.exclusions_snapshot):
+            db.add(ProjectionExclusion(task_id=log.task_id, due_date=date.fromisoformat(due_date_str)))

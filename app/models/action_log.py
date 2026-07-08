@@ -14,6 +14,7 @@ class ActionLog(Base):
     task_snapshot = Column(Text)           # JSON of all task fields before action
     recurrence_snapshot = Column(Text)     # JSON of recurrence record (delete only)
     projections_snapshot = Column(Text)    # JSON array of due_date strings before action
+    exclusions_snapshot = Column(Text)     # JSON array of ProjectionExclusion due_date strings (delete only)
     completed_task_id = Column(Integer)    # completed_tasks.id (complete actions)
     performed_set_id = Column(Integer)     # performed_sets.id (workout complete)
     performed_at = Column(DateTime, server_default=func.now())

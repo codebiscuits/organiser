@@ -27,6 +27,7 @@ def run_migrations(eng):
             auth VARCHAR NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )""",
+        "ALTER TABLE action_log ADD COLUMN exclusions_snapshot TEXT",
     ]
     with eng.connect() as conn:
         for sql in migrations:
