@@ -93,6 +93,22 @@ def create_task(client, payload: dict) -> dict:
 
 
 def add_todays_projection(db, task_id: str) -> Projection:
+    """
+    Ensure a Projection for today exists for this task, returning it.
+
+    Idempotent (get-or-create): since the finding-9 fix, create_task itself
+    already anchors a recurring/variable_recurring/workout task's first
+    projection window at max(today, start_date), so a task created from a
+    past-dated payload (e.g. RECURRING_PAYLOAD's start_date of 2026-01-01)
+    may already have today's projection by the time a test calls this — a
+    plain unconditional insert would violate the (task_id, due_date) unique
+    constraint.
+    """
+    existing = db.query(Projection).filter(
+        Projection.task_id == task_id, Projection.due_date == date.today()
+    ).first()
+    if existing:
+        return existing
     p = Projection(task_id=task_id, due_date=date.today())
     db.add(p)
     db.commit()
@@ -173,6 +189,123 @@ class TestCreateTask:
     def test_get_nonexistent_task_returns_404(self, client, db):
         resp = client.get("/tasks/does-not-exist")
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Review finding 9 — a recurrence start_date far in the past used to
+# generate a projection window entirely before today, leaving the task with
+# zero live projections. Fix: anchor the window at max(today, start_date).
+# ---------------------------------------------------------------------------
+
+class TestPastStartDateProjections:
+    PAST_START = {
+        "interval_type": "daily",
+        "interval_multiple": 1,
+        # Well outside the old fixed 90-day window measured from start_date.
+        "start_date": (date.today() - timedelta(days=200)).isoformat() + "T00:00:00",
+    }
+
+    def test_create_task_with_past_start_date_has_live_projection(self, client, db):
+        data = create_task(client, {
+            "type": "recurring",
+            "title": "Old daily habit",
+            "importance": 2,
+            "urgency": 2,
+            "estimated_duration": 10,
+            "recurrence": self.PAST_START,
+        })
+        task_id = data["id"]
+
+        live = db.query(Projection).filter(
+            Projection.task_id == task_id,
+            Projection.due_date >= date.today(),
+        ).count()
+        assert live > 0, "a recurrence with a start_date >90 days in the past must still have a live projection"
+
+    def test_type_change_to_recurring_with_past_start_date_has_live_projection(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+
+        resp = client.put(
+            f"/tasks/{task_id}",
+            json={
+                "type": "recurring",
+                "title": "Old daily habit",
+                "importance": 2,
+                "urgency": 2,
+                "recurrence": self.PAST_START,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        new_id = resp.json()["id"]
+
+        live = db.query(Projection).filter(
+            Projection.task_id == new_id,
+            Projection.due_date >= date.today(),
+        ).count()
+        assert live > 0, "type-change into recurring with a past start_date must still have a live projection"
+
+    def test_update_adds_recurrence_with_past_start_date_has_live_projection(self, client, db):
+        # A plain errand doesn't carry recurrence — post it as an errand,
+        # then PUT the same type with a recurrence attached, exercising
+        # update_task's "task had no recurrence row before" branch.
+        data = create_task(client, {**ERRAND_PAYLOAD, "type": "recurring", "recurrence": {
+            "interval_type": "daily", "interval_multiple": 1,
+        }})
+        task_id = data["id"]
+        # Wipe the recurrence row this created so update_task takes the
+        # "newly recurring" branch again below.
+        db.query(Recurrence).filter(Recurrence.task_id == task_id).delete()
+        db.query(Projection).filter(Projection.task_id == task_id).delete()
+        db.commit()
+
+        resp = client.put(
+            f"/tasks/{task_id}",
+            json={"recurrence": self.PAST_START},
+        )
+        assert resp.status_code == 200, resp.text
+
+        live = db.query(Projection).filter(
+            Projection.task_id == task_id,
+            Projection.due_date >= date.today(),
+        ).count()
+        assert live > 0, "adding a recurrence with a past start_date must still produce a live projection"
+
+
+# ---------------------------------------------------------------------------
+# Review finding 8 — duplicate-title check used SQLite's ASCII-only LOWER(),
+# missing matches on titles with uppercase accented letters.
+# ---------------------------------------------------------------------------
+
+class TestCheckTitleDuplicate:
+    def test_exact_match_flagged_duplicate(self, client, db):
+        create_task(client, {**ERRAND_PAYLOAD, "title": "Buy milk"})
+        resp = client.get("/tasks/check-title", params={"title": "Buy milk"})
+        assert resp.status_code == 200
+        assert resp.json()["duplicate"] is True
+
+    def test_no_match_not_duplicate(self, client, db):
+        resp = client.get("/tasks/check-title", params={"title": "Nothing like this exists"})
+        assert resp.status_code == 200
+        assert resp.json()["duplicate"] is False
+
+    def test_matches_non_ascii_uppercase_case_insensitively(self, client, db):
+        """
+        SQLite's built-in LOWER() only folds ASCII case, so a title with an
+        uppercase accented letter would never match its lowercase form
+        under the old `func.lower(Task.title) == normalized` SQL filter.
+        Python's str.lower() is Unicode-aware and catches it.
+        """
+        create_task(client, {**ERRAND_PAYLOAD, "title": "CAFÉ run"})
+        resp = client.get("/tasks/check-title", params={"title": "café run"})
+        assert resp.status_code == 200
+        assert resp.json()["duplicate"] is True
+
+    def test_exclude_id_ignores_self_match(self, client, db):
+        data = create_task(client, {**ERRAND_PAYLOAD, "title": "Buy milk"})
+        resp = client.get("/tasks/check-title", params={"title": "Buy milk", "exclude_id": data["id"]})
+        assert resp.status_code == 200
+        assert resp.json()["duplicate"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +427,41 @@ class TestDeferTask:
         resp = client.post("/tasks/does-not-exist/defer")
         assert resp.status_code == 404
 
+    def test_defer_daily_task_when_tomorrow_already_projected(self, client, db):
+        """
+        Fallout of the finding-9 fix: a daily recurrence now has tomorrow's
+        occurrence generated up front (previously, a past start_date meant
+        no future projections existed at all, so this collision was
+        unreachable). Deferring today's occurrence must not try to move it
+        onto the same (task_id, due_date) as the already-existing tomorrow
+        projection — it should just drop today's row instead.
+        """
+        data = create_task(client, {
+            "type": "recurring",
+            "title": "Daily habit",
+            "importance": 2,
+            "urgency": 2,
+            "estimated_duration": 10,
+            "recurrence": {"interval_type": "daily", "interval_multiple": 1},
+        })
+        task_id = data["id"]
+
+        tomorrow = date.today() + timedelta(days=1)
+        assert db.query(Projection).filter(
+            Projection.task_id == task_id, Projection.due_date == tomorrow
+        ).first() is not None, "sanity check: tomorrow's projection should already exist"
+
+        resp = client.post(f"/tasks/{task_id}/defer")
+        assert resp.status_code == 200
+
+        assert db.query(Projection).filter(
+            Projection.task_id == task_id, Projection.due_date == date.today()
+        ).first() is None
+        # Exactly one row for tomorrow (not a duplicate, not gone).
+        assert db.query(Projection).filter(
+            Projection.task_id == task_id, Projection.due_date == tomorrow
+        ).count() == 1
+
 
 # ---------------------------------------------------------------------------
 # Task deletion
@@ -332,6 +500,37 @@ class TestDeleteTask:
         resp = client.delete("/tasks/does-not-exist")
         assert resp.status_code == 404
 
+    def test_undo_delete_restores_tombstones(self, client, db):
+        """
+        Review finding 5: delete_task hard-deletes ProjectionExclusion rows
+        but the ActionLog snapshot only ever covered Projection rows, so
+        _undo_delete had no way to bring tombstones back — a regeneration
+        after undoing a delete could resurrect occurrences the user had
+        deliberately skipped before deleting the task.
+        """
+        from app.models.recurrence import ProjectionExclusion
+
+        data = create_task(client, RECURRING_PAYLOAD)
+        task_id = data["id"]
+        skipped_date = date.today() + timedelta(days=5)
+        db.add(ProjectionExclusion(task_id=task_id, due_date=skipped_date))
+        db.commit()
+
+        resp = client.delete(f"/tasks/{task_id}")
+        assert resp.status_code == 200
+        assert db.query(ProjectionExclusion).filter(ProjectionExclusion.task_id == task_id).count() == 0
+
+        import json as _json
+        log_id = _json.loads(resp.headers["hx-trigger"])["showUndo"]["ids"][0]
+        undo_resp = client.post(f"/undo/{log_id}")
+        assert undo_resp.status_code == 200
+
+        assert db.query(Task).filter(Task.id == task_id).first() is not None
+        assert db.query(ProjectionExclusion).filter(
+            ProjectionExclusion.task_id == task_id,
+            ProjectionExclusion.due_date == skipped_date,
+        ).first() is not None
+
 
 # ---------------------------------------------------------------------------
 # Recurring task delete modal / delete-instance
@@ -341,8 +540,7 @@ class TestDeleteInstance:
     def _task_with_todays_projection(self, client, db):
         data = create_task(client, RECURRING_PAYLOAD)
         task_id = data["id"]
-        db.add(Projection(task_id=task_id, due_date=date.today()))
-        db.commit()
+        add_todays_projection(db, task_id)
         return task_id
 
     def test_delete_instance_removes_only_todays_projection(self, client, db):
@@ -546,6 +744,44 @@ class TestVariableRecurringCompletion:
             data={"days_until_next": 7},
         )
         assert resp.status_code == 400
+
+    def test_explicit_next_date_overrides_prior_tombstone(self, client, db):
+        """
+        Review finding 3: complete_variable_recurring_task used to insert
+        the new Projection without checking ProjectionExclusion, so if the
+        user's chosen next_date happened to match a date they'd previously
+        "deleted today only" for this task, the Projection and the
+        Exclusion tombstone ended up coexisting for that date forever (a
+        later regeneration never cleans up an exclusion once a live
+        projection already exists at that date).
+
+        Decision: an explicit user-chosen date overrides the tombstone —
+        the tombstone should be removed, not the projection skipped.
+        """
+        from app.models.recurrence import ProjectionExclusion
+
+        data = self._make_variable_recurring(client, db)
+        task_id = data["id"]
+        add_todays_projection(db, task_id)
+
+        target_date = date.today() + timedelta(days=10)
+        db.add(ProjectionExclusion(task_id=task_id, due_date=target_date))
+        db.commit()
+
+        resp = client.post(
+            f"/tasks/{task_id}/complete/variable",
+            data={"days_until_next": 10},
+        )
+        assert resp.status_code == 200, resp.text
+
+        assert db.query(ProjectionExclusion).filter(
+            ProjectionExclusion.task_id == task_id,
+            ProjectionExclusion.due_date == target_date,
+        ).first() is None
+        assert db.query(Projection).filter(
+            Projection.task_id == task_id,
+            Projection.due_date == target_date,
+        ).first() is not None
 
 
 # ---------------------------------------------------------------------------
@@ -759,6 +995,54 @@ class TestDeleteProjection:
             Projection.due_date == target_date,
         ).first()
         assert resurrected is None, "deleted occurrence was resurrected by regeneration"
+
+    def test_delete_projection_writes_action_log_and_undo_restores_it(self, client, db):
+        """
+        Review finding 7: the week-view single-occurrence delete
+        (DELETE /tasks/week/projection/{task_id}) wrote a tombstone but no
+        ActionLog and offered no undo, unlike its sibling
+        /{task_id}/delete-instance which does the identical thing WITH
+        undo. Fix: give this route the same ActionLog + undo treatment —
+        undo should restore the projection and clear the tombstone.
+        """
+        from app.models.action_log import ActionLog
+        from app.models.recurrence import ProjectionExclusion
+
+        data = create_task(client, RECURRING_PAYLOAD)
+        task_id = data["id"]
+        target = db.query(Projection).filter(Projection.task_id == task_id).first()
+        target_date = target.due_date
+
+        resp = client.delete(
+            f"/tasks/week/projection/{task_id}",
+            params={"date": target_date.isoformat()},
+        )
+        assert resp.status_code == 200
+        assert "showUndo" in resp.headers.get("hx-trigger", "")
+
+        log = db.query(ActionLog).filter(
+            ActionLog.task_id == task_id,
+            ActionLog.action_type == "delete_instance",
+        ).first()
+        assert log is not None, "week-view delete must write an ActionLog entry"
+        assert target_date.isoformat() in log.projections_snapshot
+
+        assert db.query(Projection).filter(
+            Projection.task_id == task_id, Projection.due_date == target_date
+        ).first() is None
+        assert db.query(ProjectionExclusion).filter(
+            ProjectionExclusion.task_id == task_id, ProjectionExclusion.due_date == target_date
+        ).first() is not None
+
+        undo_resp = client.post(f"/undo/{log.id}")
+        assert undo_resp.status_code == 200
+
+        assert db.query(Projection).filter(
+            Projection.task_id == task_id, Projection.due_date == target_date
+        ).first() is not None, "undo must restore the deleted projection"
+        assert db.query(ProjectionExclusion).filter(
+            ProjectionExclusion.task_id == task_id, ProjectionExclusion.due_date == target_date
+        ).first() is None, "undo must clear the tombstone"
 
 
 # ---------------------------------------------------------------------------
@@ -1078,6 +1362,88 @@ class TestUpdateTaskTypeChange:
         assert resp.json()["id"] == task_id
         assert resp.json()["title"] == "Buy bread"
 
+    def test_type_change_preserves_snooze_and_deferred_count(self, client, db):
+        """
+        Review finding 1: _replace_task_for_type_change's Task(...) call
+        omitted snooze_until/deferred_count/manual_scheduled_time, so a
+        snoozed/deferred task reappeared in today's list and lost its defer
+        weight the moment its type was edited.
+        """
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+
+        # Defer twice: errands have no projection, so this sets snooze_until
+        # and bumps deferred_count.
+        client.post(f"/tasks/{task_id}/defer")
+        client.post(f"/tasks/{task_id}/defer")
+
+        task = db.query(Task).filter(Task.id == task_id).first()
+        assert task.deferred_count == 2
+        assert task.snooze_until == str(date.today() + timedelta(days=1))
+
+        resp = client.put(
+            f"/tasks/{task_id}",
+            json={"type": "deadline", "title": "x", "importance": 2, "deadline_at": "2099-05-01T12:00:00"},
+        )
+        assert resp.status_code == 200, resp.text
+        new_id = resp.json()["id"]
+
+        new_task = db.query(Task).filter(Task.id == new_id).first()
+        assert new_task.deferred_count == 2
+        assert new_task.snooze_until == str(date.today() + timedelta(days=1))
+
+    def test_type_change_preserves_manual_scheduled_time(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+
+        client.post(
+            "/tasks/timeline/reorder",
+            json={"tasks": [{"task_id": task_id, "scheduled_hour": 14, "scheduled_minute": 30}]},
+        )
+        task = db.query(Task).filter(Task.id == task_id).first()
+        assert task.manual_scheduled_time is not None
+
+        resp = client.put(
+            f"/tasks/{task_id}",
+            json={"type": "deadline", "title": "x", "importance": 2, "deadline_at": "2099-05-01T12:00:00"},
+        )
+        assert resp.status_code == 200, resp.text
+        new_task = db.query(Task).filter(Task.id == resp.json()["id"]).first()
+        assert new_task.manual_scheduled_time is not None
+        assert new_task.manual_scheduled_time.hour == 14
+        assert new_task.manual_scheduled_time.minute == 30
+
+    def test_undo_after_type_change_does_not_resurrect_old_task(self, client, db):
+        """
+        Review finding 4: completing a recurring task logs an undoable
+        "complete" action against its id. If the task's type is then edited
+        (which replaces it with a new id via _replace_task_for_type_change),
+        the old ActionLog entry used to survive — clicking its undo toast
+        would recreate the old task from its snapshot, leaving two live
+        tasks behind (old_id resurrected + new_id from the type change).
+        """
+        data = create_task(client, RECURRING_PAYLOAD)
+        old_id = data["id"]
+        add_todays_projection(db, old_id)
+
+        complete_resp = client.post(f"/tasks/{old_id}/complete")
+        import json as _json
+        log_id = _json.loads(complete_resp.headers["hx-trigger"])["showUndo"]["ids"][0]
+
+        change_resp = client.put(
+            f"/tasks/{old_id}",
+            json={"type": "errand", "title": "Morning walk", "importance": 2, "urgency": 2},
+        )
+        assert change_resp.status_code == 200, change_resp.text
+        new_id = change_resp.json()["id"]
+
+        undo_resp = client.post(f"/undo/{log_id}")
+        assert undo_resp.status_code == 404, "the stale undo entry should have been invalidated by the type change"
+
+        assert db.query(Task).filter(Task.id == old_id).first() is None
+        assert db.query(Task).filter(Task.id == new_id).first() is not None
+        assert db.query(Task).count() == 1
+
 
 # ---------------------------------------------------------------------------
 # Admin: refresh projections
@@ -1172,6 +1538,54 @@ class TestAdminTaskCRUD:
         assert db.query(Task).filter(Task.id == task_id).first() is None
         assert db.query(Recurrence).filter(Recurrence.task_id == task_id).count() == 0
         assert db.query(Projection).filter(Projection.task_id == task_id).count() == 0
+
+    def test_admin_update_away_from_recurring_clears_exclusions(self, client, db):
+        """
+        Review finding 6: admin_task_update's "switched away from recurring"
+        branch deleted Recurrence + Projection but not ProjectionExclusion,
+        leaving orphan tombstones that would silently suppress those dates
+        if the task were ever made recurring again.
+        """
+        from app.models.recurrence import ProjectionExclusion
+
+        data = create_task(client, RECURRING_PAYLOAD)
+        task_id = data["id"]
+        db.add(ProjectionExclusion(task_id=task_id, due_date=date.today() + timedelta(days=3)))
+        db.commit()
+        assert db.query(ProjectionExclusion).filter(ProjectionExclusion.task_id == task_id).count() == 1
+
+        resp = client.post(
+            f"/admin/tasks/{task_id}",
+            data={"title": "Morning walk", "type": "errand", "importance": "2"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        assert db.query(ProjectionExclusion).filter(ProjectionExclusion.task_id == task_id).count() == 0
+        assert db.query(Recurrence).filter(Recurrence.task_id == task_id).count() == 0
+        assert db.query(Projection).filter(Projection.task_id == task_id).count() == 0
+
+    def test_admin_task_list_refreshes_via_taskupdated_listener(self, client, db):
+        """
+        Review finding 2: the admin tasks page's Done/Defer/Delete buttons
+        didn't all fire a taskUpdated trigger, AND the page had no
+        `taskUpdated from:body` listener at all — so even a button that did
+        fire the event had nothing wired up to react to it. Full-page loads
+        get the whole page (with the listener wired to #task-list); an
+        htmx-driven request (as the listener itself makes) gets just the
+        row fragment back.
+        """
+        create_task(client, ERRAND_PAYLOAD)
+
+        full_page = client.get("/admin/tasks")
+        assert full_page.status_code == 200
+        assert "taskUpdated from:body" in full_page.text
+        assert "<html" in full_page.text.lower()
+
+        fragment = client.get("/admin/tasks", headers={"HX-Request": "true"})
+        assert fragment.status_code == 200
+        assert "<html" not in fragment.text.lower()
+        assert "Buy milk" in fragment.text
 
     def test_completed_tasks_history(self, client, db):
         data = create_task(client, ERRAND_PAYLOAD)
