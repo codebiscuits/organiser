@@ -128,7 +128,12 @@ The week view builds purely from the projection table (verified 2026-07-07), so 
 
 ## In Progress
 
-<!-- Claude is currently working on these -->
+### Quick-wins review fixes
+**Status:** in-progress
+**Added:** 2026-07-07
+
+**Description:**
+Session-1 quick wins are implemented on branch `quick-wins` (HEAD `ee36828`, 253 tests passing, NOT merged/pushed). A high-effort code review found 8 confirmed/plausible bugs + cleanup — full details and fix guidance in `docs/review-quick-wins-findings.md`. Next session: apply the fixes on the same branch (delegate to Sonnet), re-run tests, quick re-review, then Ross merges. The bugs cluster around the new ProjectionExclusion tombstone table and the replace-task-on-type-change flow interacting with undo; one design decision needed (findings doc, item 3: should a user-chosen VRT next date override a tombstone?).
 
 ---
 
