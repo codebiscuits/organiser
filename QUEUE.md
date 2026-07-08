@@ -128,20 +128,22 @@ Recipes with ingredient/prep/cook metadata → weekly meal pick → generated sh
 
 ## In Progress
 
-### Week view: today's column should mirror the live list
-**Status:** in-progress (started 2026-07-08)
-**Added:** 2026-07-07
-
-**Description:**
-The week view builds purely from the projection table (verified 2026-07-07), so today's column omits live-list-only tasks (errands, deadlines picked by prioritisation). Make the first day reflect the actual live list.
-
-**Acceptance criteria:**
-- [ ] Today's column in the week view shows the same task set as the daily live list
-- [ ] Remaining days unchanged (still projection-based)
+(nothing in progress)
 
 ---
 
 ## Done
+
+### Week view: today's column mirrors the live list
+**Status:** done (2026-07-08)
+**Added:** 2026-07-07
+
+**Description:**
+Implemented on branch `week-view-today` (off `quick-wins` — merge quick-wins first), commit `466d6a9`. When today falls inside the requested range, `/tasks/week`'s JSON branch drops the generically-built entries dated today and splices in entries derived from `get_prioritised_tasks_with_metadata` (the exact live-list source the daily view uses), after the same auto-complete sweep. `projection_date` is set only on recurring/variable_recurring/workout entries, preserving the frontend's single-occurrence-vs-whole-task delete routing. No template/CSS changes needed. Suite 272 passing; the mirror test asserts week-view-today's task-id set equals the live list's, time-independently (gap scheduling depends on time of day, so specific flexible tasks can't be asserted present).
+
+**Acceptance criteria:**
+- [x] Today's column in the week view shows the same task set as the daily live list
+- [x] Remaining days unchanged (still projection-based)
 
 ### Quick-wins review fixes
 **Status:** done (2026-07-08)
