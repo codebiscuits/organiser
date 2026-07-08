@@ -327,6 +327,19 @@ document.addEventListener('alpine:init', () => {
                 if (response.ok) {
                     this.showTaskModal = false;
                     this.selectedTask = null;
+                    // The single-occurrence delete (isRecurring) now logs an
+                    // undoable action, same as "delete today only" from the
+                    // daily list — read the trigger off the raw fetch
+                    // response since this call doesn't go through htmx.
+                    if (isRecurring) {
+                        const trigger = response.headers.get('HX-Trigger');
+                        if (trigger) {
+                            try {
+                                const parsed = JSON.parse(trigger);
+                                if (parsed.showUndo) showUndoToast(parsed.showUndo.ids, parsed.showUndo.label);
+                            } catch (e) {}
+                        }
+                    }
                     this.loadTasks();
                 } else {
                     alert('Failed to delete task');
