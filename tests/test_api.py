@@ -1954,6 +1954,130 @@ class TestFullDaySchedulingScenario:
         assert "Weekly Review" in titles
         assert "Budget Meeting" in titles
 
+    def test_week_view_today_mirrors_live_list(self, client, db):
+        """
+        When today falls inside the requested range, today's column should
+        show exactly the daily live list — the same task set that "/"
+        renders via get_prioritised_tasks_with_metadata — rather than the
+        plain appointment+projection query (which never surfaces errands
+        or deadlines).
+
+        Asserted time-independently: gap scheduling depends on the time of
+        day (an evening run may drop flexible tasks like the errand), so
+        whatever the algorithm yields right now, the week JSON must match
+        it. No assertion depends on any specific flexible fixture actually
+        surviving prioritisation.
+        """
+        from app.services.prioritisation import get_prioritised_tasks_with_metadata
+
+        today = date.today()
+
+        errand = Task(
+            type="errand", title="Buy milk",
+            importance=2, urgency=2, estimated_duration=15,
+            status="pending",
+        )
+        deadline = Task(
+            type="deadline", title="Submit report",
+            deadline_at=datetime.combine(today, time(23, 59)),
+            estimated_duration=30, importance=3, status="pending",
+        )
+        recurring = Task(
+            type="recurring", title="Morning Standup",
+            scheduled_time=time(9, 30),
+            importance=2, urgency=2, estimated_duration=15,
+            allow_afternoon=False, status="pending",
+        )
+        db.add_all([errand, deadline, recurring])
+        db.commit()
+        db.refresh(recurring)
+        recurring_id = recurring.id
+        db.add(Projection(task_id=recurring.id, due_date=today))
+        db.commit()
+
+        start = today.isoformat()
+        end = (today + timedelta(days=6)).isoformat()
+        resp = client.get(f"/tasks/week?start={start}&end={end}")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        today_entries = [
+            t for t in data if t["scheduled_at"].split("T")[0] == today.isoformat()
+        ]
+
+        # Compute the live list AFTER the week request so both sides see
+        # post-auto-complete-sweep state. Compare task-id sets (not titles
+        # or scheduled times) so crossing a minute boundary between the two
+        # calls can't skew the comparison.
+        scheduled, _ = get_prioritised_tasks_with_metadata(db, today)
+        live_ids = {pt.task.id for pt in scheduled}
+
+        week_today_ids = [t["id"] for t in today_entries]
+        assert len(week_today_ids) == len(set(week_today_ids))  # no duplicates
+        assert set(week_today_ids) == live_ids
+
+        # The time-bound recurring task is fixed — always in the live list
+        # regardless of time of day — proving the id-set comparison isn't
+        # vacuously comparing two empty sets.
+        assert recurring_id in live_ids
+
+        # projection_date convention: only projection-backed types carry it
+        # (the frontend uses its presence to choose single-occurrence delete
+        # vs whole-task delete); errands/deadlines/appointments must not.
+        for entry in today_entries:
+            if entry["type"] in ("recurring", "variable_recurring", "workout"):
+                assert entry.get("projection_date") == today.isoformat()
+            else:
+                assert "projection_date" not in entry
+
+    def test_week_view_future_projection_unaffected_by_today_injection(self, client, db):
+        today = date.today()
+        future_day = today + timedelta(days=3)
+
+        recurring = Task(
+            type="recurring", title="Team Sync",
+            importance=2, urgency=1, estimated_duration=30,
+            allow_afternoon=False, status="pending",
+        )
+        db.add(recurring)
+        db.commit()
+        db.refresh(recurring)
+        db.add(Projection(task_id=recurring.id, due_date=future_day))
+        db.commit()
+
+        start = today.isoformat()
+        end = (today + timedelta(days=6)).isoformat()
+        resp = client.get(f"/tasks/week?start={start}&end={end}")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        entries = [t for t in data if t["title"] == "Team Sync"]
+        assert len(entries) == 1
+        assert entries[0]["projection_date"] == future_day.isoformat()
+
+    def test_week_view_no_injection_when_today_outside_range(self, client, db):
+        """
+        Today's live list (errands especially) must not leak into a week
+        that doesn't include today — behaviour should be identical to the
+        original appointment+projection-only query.
+        """
+        today = date.today()
+        errand = Task(
+            type="errand", title="Buy milk",
+            importance=2, urgency=2, estimated_duration=15,
+            status="pending",
+        )
+        db.add(errand)
+        db.commit()
+
+        start = (today + timedelta(days=7)).isoformat()
+        end = (today + timedelta(days=13)).isoformat()
+        resp = client.get(f"/tasks/week?start={start}&end={end}")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data == []
+
 
 # ---------------------------------------------------------------------------
 # Auto-complete sweep for overdue appointments/deadlines

@@ -373,13 +373,23 @@ async def week_view(
     if start and end:
         start_date = datetime.strptime(start, "%Y-%m-%d").date()
         end_date = datetime.strptime(end, "%Y-%m-%d").date()
-        
+
+        today = date.today()
+        # When today falls inside the requested range, today's column is
+        # replaced wholesale with the daily live list (see below) so it
+        # matches "/" exactly — including errands/deadlines that the plain
+        # appointment+projection query never surfaces, and excluding
+        # anything the prioritisation algorithm couldn't fit into today's
+        # capacity. Everything is filtered out of the generic queries here
+        # to avoid double-listing it.
+        inject_today = start_date <= today <= end_date
+
         appointments = db.query(Task).filter(
             Task.type == "appointment",
             Task.scheduled_at >= datetime.combine(start_date, time(0, 0)),
             Task.scheduled_at <= datetime.combine(end_date, time(23, 59, 59))
         ).all()
-        
+
         projections = db.query(Projection, Task).join(
             Task, Projection.task_id == Task.id
         ).filter(
@@ -387,10 +397,12 @@ async def week_view(
             Projection.due_date <= end_date,
             Task.type.in_(["recurring", "variable_recurring", "workout"])
         ).all()
-        
+
         result = []
-        
+
         for task in appointments:
+            if inject_today and task.scheduled_at and task.scheduled_at.date() == today:
+                continue
             result.append({
                 "id": task.id,
                 "title": task.title,
@@ -400,8 +412,10 @@ async def week_view(
                 "location": task.location,
                 "notes": task.notes
             })
-        
+
         for projection, task in projections:
+            if inject_today and projection.due_date == today:
+                continue
             scheduled_time = task.scheduled_time or time(9, 0)
             scheduled_at = datetime.combine(projection.due_date, scheduled_time)
             result.append({
@@ -414,7 +428,32 @@ async def week_view(
                 "notes": task.notes,
                 "projection_date": projection.due_date.isoformat()
             })
-        
+
+        if inject_today:
+            _auto_complete_trigger(db)
+            scheduled, _ = get_prioritised_tasks_with_metadata(db, today)
+            for pt in scheduled:
+                task = pt.task
+                scheduled_at = pt.scheduled_time or datetime.combine(
+                    today, task.scheduled_time or time(9, 0)
+                )
+                entry = {
+                    "id": task.id,
+                    "title": task.title,
+                    "type": task.type,
+                    "scheduled_at": scheduled_at.isoformat(),
+                    "duration": task.estimated_duration or 30,
+                    "location": task.location,
+                    "notes": task.notes,
+                }
+                # Only recurring/variable_recurring/workout tasks come from a
+                # Projection row — that's what the frontend uses to decide
+                # between single-occurrence delete (with undo) and whole-task
+                # delete. Errands/deadlines/appointments must not carry this.
+                if task.type in ("recurring", "variable_recurring", "workout"):
+                    entry["projection_date"] = today.isoformat()
+                result.append(entry)
+
         from fastapi.responses import JSONResponse
         return JSONResponse(content=result)
     
