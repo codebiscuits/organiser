@@ -113,6 +113,26 @@ function weekdayShort(value) {
     return d.toLocaleDateString(undefined, { weekday: 'short' });
 }
 
+// Case-insensitive duplicate-title check shared by the create/edit task
+// forms (task_form.html, task_edit_form.html, admin/task_form.html).
+// Returns true if an existing task (other than excludeId, if given) has
+// this title; false on no match or network error — this is a non-blocking,
+// best-effort warning, never something that should block the form.
+async function fetchTitleDuplicate(title, excludeId) {
+    const trimmed = (title || '').trim();
+    if (!trimmed) return false;
+    try {
+        const params = new URLSearchParams({ title: trimmed });
+        if (excludeId) params.set('exclude_id', excludeId);
+        const resp = await fetch('/tasks/check-title?' + params);
+        if (!resp.ok) return false;
+        const data = await resp.json();
+        return !!data.duplicate;
+    } catch (err) {
+        return false;
+    }
+}
+
 // Alpine.js countdown component for deadline tasks
 document.addEventListener('alpine:init', () => {
     Alpine.data('countdown', (deadline) => ({
