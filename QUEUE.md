@@ -46,6 +46,15 @@ Synthesised from Ross's notes files (`00 Main Notes.md`, `Big Features and Updat
 
 ## Ideas
 
+### Small bugs surfaced by the quick-wins review (not fixed, low priority)
+**Status:** idea
+**Added:** 2026-07-08
+
+**Description:**
+Two leftovers from the review fix round, both pre-existing on main:
+- `admin.py:155,257` still anchor projections at `start = recurrence.start_date or date.today()` — same latent past-start_date bug as review finding 9 (fixed in `tasks.py` via `_build_recurrence_and_projections`; admin's create/update paths could reuse it).
+- Editing an appointment's `prep_duration` never creates/updates the prep task (prep-task creation is create-only). Noted in the review's refuted section as a real pre-existing gap.
+
 ### Hourly capacity check
 **Status:** idea (discussed 2026-07-07, near-ready)
 **Added:** 2026-07-07
@@ -113,12 +122,18 @@ Recipes with ingredient/prep/cook metadata → weekly meal pick → generated sh
 
 ## Ready
 
+(nothing ready — next up is the Theme A design session with Ross)
+
+---
+
+## In Progress
+
 ### Week view: today's column should mirror the live list
-**Status:** ready
+**Status:** in-progress (started 2026-07-08)
 **Added:** 2026-07-07
 
 **Description:**
-The week view builds purely from the projection table (verified 2026-07-07), so today's column omits live-list-only tasks (errands, deadlines picked by prioritisation). Make the first day reflect the actual live list. Confirmed still wanted 2026-07-07; not part of the session-1 quick-wins batch — pick up next session.
+The week view builds purely from the projection table (verified 2026-07-07), so today's column omits live-list-only tasks (errands, deadlines picked by prioritisation). Make the first day reflect the actual live list.
 
 **Acceptance criteria:**
 - [ ] Today's column in the week view shows the same task set as the daily live list
@@ -126,18 +141,14 @@ The week view builds purely from the projection table (verified 2026-07-07), so 
 
 ---
 
-## In Progress
+## Done
 
 ### Quick-wins review fixes
-**Status:** in-progress
+**Status:** done (2026-07-08)
 **Added:** 2026-07-07
 
 **Description:**
-Session-1 quick wins are implemented on branch `quick-wins` (HEAD `ee36828`, 253 tests passing, NOT merged/pushed). A high-effort code review found 8 confirmed/plausible bugs + cleanup — full details and fix guidance in `docs/review-quick-wins-findings.md`. Next session: apply the fixes on the same branch (delegate to Sonnet), re-run tests, quick re-review, then Ross merges. The bugs cluster around the new ProjectionExclusion tombstone table and the replace-task-on-type-change flow interacting with undo; one design decision needed (findings doc, item 3: should a user-chosen VRT next date override a tombstone?).
-
----
-
-## Done
+All 10 findings from `docs/review-quick-wins-findings.md` fixed on `quick-wins` (commits `42a01f1`…`d758c27`, Sonnet implementation + Fable re-review): type-change now preserves snooze/defer/manual-time state and invalidates stale undo logs; admin task list refreshes via the `taskUpdated from:body` pattern (shared action-button macros extracted); VRT completion clears a conflicting tombstone (decision: explicit user-chosen next date overrides a prior single-occurrence delete); undo of a full task delete restores tombstones (new `exclusions_snapshot` column + migration); admin type-change edit no longer leaks orphan tombstones; week-view occurrence delete now has an undo toast; duplicate-title check is Unicode-aware; projection windows anchor at `max(today, start_date)` so past start dates still produce live projections (shared `_build_recurrence_and_projections` helper, ×5 sites); plus the listed helper extractions. 16 regression tests added; suite 269 passing. NOT merged/pushed — Ross merges.
 
 ### Session 1 quick wins (batch)
 **Status:** done

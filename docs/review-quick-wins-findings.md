@@ -1,6 +1,8 @@
 # Code review findings — `quick-wins` branch (2026-07-07)
 
-Status: **review complete, fix round NOT started.** Branch `quick-wins` (HEAD `ee36828`, 7 commits off `main` at `a05740c`), all 253 tests passing, not merged, not pushed. Review ran at high effort: 8 finder angles → 31 candidates → dedup → 12 verifiers. Next session: apply fixes below (delegate to Sonnet), re-verify, re-run suite, then Ross merges.
+Status: **fix round COMPLETE (2026-07-08).** All findings 1–10 fixed on `quick-wins` (commits `42a01f1`…`d758c27`), 16 regression tests added, suite at 269 passing. Re-reviewed by Fable; no issues. Not merged, not pushed — awaiting Ross's merge. Decision taken on finding 3: an explicit user-chosen VRT next date **overrides** a prior tombstone (the exclusion row for that date is deleted). Deliberately left out of scope: the two `start = recurrence.start_date or date.today()` sites in `admin.py` (:155, :257) have the same latent finding-9 issue — noted in QUEUE.md as a follow-up idea.
+
+Original review status: review ran at high effort on HEAD `ee36828` (7 commits off `main` at `a05740c`): 8 finder angles → 31 candidates → dedup → 12 verifiers.
 
 ## Confirmed bugs (fix before merge)
 
