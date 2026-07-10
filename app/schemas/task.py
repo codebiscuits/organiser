@@ -109,6 +109,7 @@ class TaskResponse(BaseModel):
     urgency: int | None
     allow_afternoon: bool
     deadline_at: datetime | None
+    deadline_auto: bool = False
     scheduled_at: datetime | None
     prep_duration: int | None
     scheduled_time: time | None

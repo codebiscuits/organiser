@@ -1604,3 +1604,114 @@ main {
     width: 11px;
     height: 11px;
 }
+
+/* ── Errand half-life prompt banner (Theme A A4) ───────────────────────── */
+
+.errand-prompt-banner {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+}
+
+.errand-prompt-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.errand-prompt-heading {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent-deep);
+}
+
+.errand-prompt-close {
+    background: none;
+    border: none;
+    font-size: 1.1rem;
+    line-height: 1;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0 0.25rem;
+}
+
+.errand-prompt-close:hover {
+    color: var(--text-primary);
+}
+
+.errand-prompt-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    padding: 0.5rem 0;
+}
+
+.errand-prompt-row + .errand-prompt-row {
+    border-top: 1px solid var(--border);
+}
+
+.errand-prompt-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-width: 0;
+}
+
+.errand-prompt-title {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.errand-prompt-question {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.errand-prompt-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.errand-prompt-date {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    padding: 0.3rem 0.5rem;
+    font-size: 0.85rem;
+}
+
+.errand-prompt-btn {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    padding: 0.3rem 0.65rem;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.errand-prompt-btn--set {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--text-on-accent);
+    font-weight: 600;
+}
+
+.errand-prompt-btn--set:hover {
+    filter: brightness(0.95);
+}
+
+.errand-prompt-btn--snooze:hover {
+    border-color: var(--accent-deep);
+    color: var(--accent-deep);
+}

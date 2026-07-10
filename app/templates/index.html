@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 
 {% block content %}
+<div id="errand-prompt" hx-get="/tasks/errand-prompts" hx-trigger="load, taskUpdated from:body" hx-swap="innerHTML"></div>
+
 <div class="focus-layout">
     <section class="current-task-focus">
         <div id="current-task-card" hx-get="/tasks/current" hx-trigger="load, taskUpdated from:body" hx-swap="innerHTML" hx-on::after-request="handleUndoHeader(event.detail.xhr)">

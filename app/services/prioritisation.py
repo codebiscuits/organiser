@@ -88,8 +88,42 @@ def effective_urgency_for_recurring(task: Task, default: int = 1) -> int:
     return task.urgency or default
 
 
-def effective_urgency_for_errand(task: Task) -> int:
-    return task.urgency or 1
+def effective_urgency_for_errand(
+    task: Task, available_hours_per_day: int = 6
+) -> tuple[int, bool]:
+    """
+    Effective urgency for an errand, returning (urgency, due_today).
+
+    Theme A component A4 — every errand is time-bound, so urgency now flows
+    through the same buffer maths as deadlines, keyed off deadline_at:
+
+    - No deadline_at (legacy row the migration hasn't touched): the user's
+      static urgency, as before.
+    - Auto deadline (deadline_auto=True): buffer-based urgency, but NEVER
+      due-today pinned; a fully expired auto-deadline escalates to 3 and
+      stays on the list (the half-life prompt handles it) rather than being
+      treated as due/overdue.
+    - User-confirmed deadline (deadline_auto=False): full deadline semantics
+      — due today ⇒ urgency 3 + pinned. (Overdue ones never reach here:
+      get_flexible_tasks skips them, the auto-complete sweep handles them.)
+
+    In all buffer-based cases the user's own urgency setting acts as a
+    floor: max(base, computed), so a hand-set urgency-3 errand is never
+    downgraded by a comfortably distant auto-deadline.
+    """
+    base = task.urgency or 1
+    if not task.deadline_at:
+        return base, False
+
+    today = date.today()
+    if task.deadline_auto:
+        if task.deadline_at.date() < today:
+            return 3, False
+        return max(base, calculate_urgency_for_deadline(task, available_hours_per_day)), False
+
+    if task.deadline_at.date() == today:
+        return 3, True
+    return max(base, calculate_urgency_for_deadline(task, available_hours_per_day)), False
 
 
 def effective_urgency_for_deadline(
@@ -338,13 +372,23 @@ def get_flexible_tasks(db: Session, target_date: date, available_hours_per_day: 
     ).all()
 
     for task in errands:
-        urgency = effective_urgency_for_errand(task)
+        if (
+            task.deadline_at
+            and not task.deadline_auto
+            and task.deadline_at.date() < target_date
+        ):
+            # Overdue USER-CONFIRMED errand deadline — handled by the
+            # auto-complete sweep, same as deadline tasks. (Auto deadlines
+            # never take this branch: expiry escalates urgency instead.)
+            continue
+        urgency, due_today = effective_urgency_for_errand(task, available_hours_per_day)
         flexible.append(PrioritisedTask(
             task=task,
             priority_score=calculate_priority_score(task.importance, urgency),
             calculated_urgency=urgency,
             recurrence_timescale=RecurrenceTimescale.NONE,
             is_fixed=False,
+            due_today=due_today,
         ))
     
     flexible.sort(key=lambda t: t.sort_key(), reverse=True)

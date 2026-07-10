@@ -6,6 +6,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.models.task import Task, CompletedTask
 from app.models.recurrence import Recurrence, Projection, ProjectionExclusion
@@ -46,6 +47,26 @@ def _sync_task_notifications(db: Session, task: Task, offsets: list[int]) -> Non
         if task.scheduled_at is not None and (task.scheduled_at - timedelta(minutes=offset)) <= now:
             sent_at = now
         db.add(TaskNotification(task_id=task.id, offset_minutes=offset, sent_at=sent_at))
+
+
+def apply_errand_auto_deadline(task: Task) -> None:
+    """
+    Theme A component A4: every errand is time-bound — nothing floats forever.
+
+    If the errand arrived without a user-chosen deadline, stamp
+    deadline_at = now + errand_auto_deadline_days and mark it deadline_auto
+    so downstream logic knows it's a soft horizon (never due-today pinned,
+    never swept by auto_complete_overdue_tasks — see prioritisation.py and
+    docs/design-theme-a.md §3). A user-supplied deadline is respected as a
+    real commitment (deadline_auto=False). No-op for other task types.
+    """
+    if task.type != "errand":
+        return
+    if task.deadline_at:
+        task.deadline_auto = False
+        return
+    task.deadline_at = datetime.now() + timedelta(days=settings.errand_auto_deadline_days)
+    task.deadline_auto = True
 
 
 def _prune_old_logs(db):
@@ -133,6 +154,10 @@ def auto_complete_overdue_tasks(db: Session) -> list[tuple[int, str]]:
     - Appointments: scheduled_at.date() < today
     - Deadlines: deadline_at.date() < today (deadlines due today get a full
       day pinned to the top of the live list before this applies)
+    - Errands with a USER-CONFIRMED deadline (deadline_auto=False): same as
+      deadlines. Errands with an AUTO deadline (Theme A A4) are NEVER swept —
+      auto-deadline expiry escalates urgency and re-triggers the "when will
+      you actually do this?" prompt instead of silently binning the task.
 
     Returns a list of (log_id, title) for any tasks swept, so callers can
     surface an undo toast.
@@ -140,11 +165,13 @@ def auto_complete_overdue_tasks(db: Session) -> list[tuple[int, str]]:
     today = date.today()
     overdue = db.query(Task).filter(
         Task.status == "pending",
-        Task.type.in_(("appointment", "deadline")),
+        Task.type.in_(("appointment", "deadline", "errand")),
     ).all()
 
     swept = []
     for task in overdue:
+        if task.type == "errand" and task.deadline_auto:
+            continue
         cutoff = task.scheduled_at if task.type == "appointment" else task.deadline_at
         if not cutoff or cutoff.date() >= today:
             continue
@@ -293,6 +320,119 @@ async def check_title(
         query = query.filter(Task.id != exclude_id)
     match = next((t for t in query.all() if t.title.lower() == normalized), None)
     return {"duplicate": match is not None, "title": match.title if match else None}
+
+
+def get_errands_due_for_prompt(db: Session, limit: int = 3) -> list[Task]:
+    """
+    Errands whose auto-deadline has passed its half-life prompt point
+    (Theme A component A4): pending, deadline_auto=True, and
+    now >= created_at + errand_prompt_fraction × (deadline_at - created_at).
+
+    Fully expired auto-deadlines (deadline_at < now) sort first — ordering
+    by deadline_at ascending achieves that automatically, since every
+    expired deadline predates every unexpired one. Capped at `limit` so the
+    banner stays a nudge, not a wall.
+    """
+    now = datetime.now()
+    candidates = db.query(Task).filter(
+        Task.type == "errand",
+        Task.status == "pending",
+        Task.deadline_auto.is_(True),
+        Task.deadline_at.isnot(None),
+    ).order_by(Task.deadline_at.asc()).all()
+
+    due = []
+    for task in candidates:
+        created = task.created_at or now
+        span = task.deadline_at - created
+        if span.total_seconds() <= 0:
+            prompt_point = task.deadline_at
+        else:
+            prompt_point = created + span * settings.errand_prompt_fraction
+        if now >= prompt_point:
+            due.append(task)
+            if len(due) >= limit:
+                break
+    return due
+
+
+@router.get("/errand-prompts", response_class=HTMLResponse)
+async def errand_prompts(request: Request, db: Session = Depends(get_db)):
+    """
+    The "when will you actually do this?" banner for the daily view.
+
+    NOTE: registered before /{task_id} — same first-match constraint as
+    /check-title above.
+    """
+    errands = get_errands_due_for_prompt(db)
+    return templates.TemplateResponse(
+        request,
+        "components/errand_prompt_banner.html",
+        {"errands": errands},
+    )
+
+
+def _get_auto_deadline_errand_or_422(db: Session, task_id: str) -> Task:
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.type != "errand":
+        raise HTTPException(status_code=400, detail="Task is not an errand")
+    return task
+
+
+def _log_errand_prompt_edit(db: Session, task: Task, task_snap: str, label: str) -> Response:
+    log = ActionLog(
+        action_type="edit",
+        task_id=task.id,
+        task_title=task.title,
+        task_snapshot=task_snap,
+    )
+    db.add(log)
+    _prune_old_logs(db)
+    db.flush()
+    log_id = log.id
+    db.commit()
+    return Response(status_code=200, headers={"HX-Trigger": _undo_trigger(log_id, label)})
+
+
+@router.post("/{task_id}/errand-deadline", response_class=HTMLResponse)
+async def set_errand_deadline(
+    task_id: str,
+    deadline_date: date = Form(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Half-life prompt action (a): the user picked a real date — set it and
+    clear deadline_auto, making it a genuine commitment (eligible for
+    due-today pinning and the overdue sweep, like a deadline task).
+    """
+    task = _get_auto_deadline_errand_or_422(db, task_id)
+    task_snap = json.dumps(task_to_dict(task))
+
+    # End of day, matching how deadline tasks are conventionally dated —
+    # "due on the 15th" means all of the 15th, not midnight at its start.
+    task.deadline_at = datetime.combine(deadline_date, time(23, 59))
+    task.deadline_auto = False
+
+    return _log_errand_prompt_edit(db, task, task_snap, f"'{task.title}' deadline set")
+
+
+@router.post("/{task_id}/errand-snooze", response_class=HTMLResponse)
+async def snooze_errand_deadline(task_id: str, db: Session = Depends(get_db)):
+    """
+    Half-life prompt action (b): "keep floating" — push the auto-deadline
+    out ~6 months. Stays deadline_auto=True, so the task never becomes
+    dateless and the prompt will fire again at the new span's half-life.
+    """
+    task = _get_auto_deadline_errand_or_422(db, task_id)
+    task_snap = json.dumps(task_to_dict(task))
+
+    base_deadline = task.deadline_at or datetime.now()
+    task.deadline_at = base_deadline + timedelta(days=182)
+    task.deadline_auto = True
+
+    return _log_errand_prompt_edit(db, task, task_snap, f"'{task.title}' kept floating")
 
 
 @router.get("/all", response_model=list[TaskResponse])
@@ -583,6 +723,7 @@ async def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
         allowed_days=task_data.allowed_days,
         status="pending",
     )
+    apply_errand_auto_deadline(task)
     db.add(task)
     db.flush()
 
@@ -1179,7 +1320,9 @@ def _replace_task_for_type_change(db: Session, old_task: Task, task_data: TaskUp
         ),
         # Type-specific date fields don't carry across a type change — an
         # old deadline_at is meaningless once the task is an appointment.
-        deadline_at=task_data.deadline_at if new_type == "deadline" else None,
+        # (Errands accept one too now — user-chosen if supplied, else the
+        # auto-deadline applied just below.)
+        deadline_at=task_data.deadline_at if new_type in ("deadline", "errand") else None,
         scheduled_at=task_data.scheduled_at if new_type == "appointment" else None,
         prep_duration=task_data.prep_duration if task_data.prep_duration is not None else old_task.prep_duration,
         scheduled_time=(
@@ -1197,6 +1340,7 @@ def _replace_task_for_type_change(db: Session, old_task: Task, task_data: TaskUp
         deferred_count=old_task.deferred_count,
         manual_scheduled_time=old_task.manual_scheduled_time,
     )
+    apply_errand_auto_deadline(new_task)
     db.add(new_task)
     db.flush()
 
@@ -1258,6 +1402,10 @@ async def update_task(task_id: str, task_data: TaskUpdate, response: Response, d
         task.allow_afternoon = task_data.allow_afternoon
     if task_data.deadline_at is not None:
         task.deadline_at = task_data.deadline_at
+        if task.type == "errand":
+            # An explicitly edited errand deadline is a user commitment,
+            # not the soft auto-horizon (Theme A A4).
+            task.deadline_auto = False
     if task_data.scheduled_at is not None:
         task.scheduled_at = task_data.scheduled_at
     if task_data.prep_duration is not None:

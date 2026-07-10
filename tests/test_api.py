@@ -2469,3 +2469,311 @@ class TestTaskTagAssociation:
         assert resp.status_code == 200
 
         assert db.query(TaskTag).filter(TaskTag.task_id == task_id).count() == 1
+
+
+# ---------------------------------------------------------------------------
+# Theme A, component A4 — errand auto-deadlines: creation, migration,
+# sweep behaviour, and the half-life prompt endpoints/banner.
+# ---------------------------------------------------------------------------
+
+from app.config import settings
+from app.database import run_migrations
+from app.routers.tasks import auto_complete_overdue_tasks, get_errands_due_for_prompt
+
+
+class TestErrandAutoDeadlineCreation:
+    def test_new_errand_gets_auto_deadline(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+
+        assert data["deadline_auto"] is True
+        assert data["deadline_at"] is not None
+        deadline = datetime.fromisoformat(data["deadline_at"])
+        expected = date.today() + timedelta(days=settings.errand_auto_deadline_days)
+        # Allow a day of slack for midnight-crossing test runs
+        assert abs((deadline.date() - expected).days) <= 1
+
+    def test_explicit_errand_deadline_respected_as_user_confirmed(self, client, db):
+        payload = {**ERRAND_PAYLOAD, "deadline_at": "2099-05-01T23:59:00"}
+        data = create_task(client, payload)
+
+        assert data["deadline_auto"] is False
+        assert datetime.fromisoformat(data["deadline_at"]).date() == date(2099, 5, 1)
+
+    def test_non_errand_types_unaffected(self, client, db):
+        data = create_task(client, DEADLINE_PAYLOAD)
+        assert data["deadline_auto"] is False
+        assert datetime.fromisoformat(data["deadline_at"]).date() == date(2099, 4, 15)
+
+        data = create_task(client, APPOINTMENT_PAYLOAD)
+        assert data["deadline_at"] is None
+
+
+class TestErrandAutoDeadlineMigration:
+    def _add_dateless_errand(self, db, created_days_ago: int) -> str:
+        task = Task(
+            type="errand",
+            title=f"Old errand {created_days_ago}",
+            estimated_duration=15,
+            importance=1,
+            urgency=1,
+            status="pending",
+            deadline_at=None,
+            created_at=datetime.now() - timedelta(days=created_days_ago),
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        return task.id
+
+    def test_migration_dates_old_errand_at_today_plus_30_floor(self, db):
+        # created 400 days ago: created+365 is already past, so the
+        # today+30 floor wins — old stock moves but nothing is instantly due.
+        task_id = self._add_dateless_errand(db, created_days_ago=400)
+
+        run_migrations(db.get_bind())
+        db.expire_all()
+
+        task = db.query(Task).filter(Task.id == task_id).first()
+        assert task.deadline_at is not None
+        assert bool(task.deadline_auto) is True
+        assert abs((task.deadline_at.date() - (date.today() + timedelta(days=30))).days) <= 1
+
+    def test_migration_dates_recent_errand_at_created_plus_365(self, db):
+        task_id = self._add_dateless_errand(db, created_days_ago=10)
+
+        run_migrations(db.get_bind())
+        db.expire_all()
+
+        task = db.query(Task).filter(Task.id == task_id).first()
+        expected = date.today() - timedelta(days=10) + timedelta(days=365)
+        assert abs((task.deadline_at.date() - expected).days) <= 1
+
+    def test_migration_is_idempotent(self, db):
+        task_id = self._add_dateless_errand(db, created_days_ago=100)
+
+        run_migrations(db.get_bind())
+        db.expire_all()
+        first_deadline = db.query(Task).filter(Task.id == task_id).first().deadline_at
+
+        run_migrations(db.get_bind())
+        db.expire_all()
+        second_deadline = db.query(Task).filter(Task.id == task_id).first().deadline_at
+
+        assert first_deadline == second_deadline
+
+    def test_migration_leaves_dated_errands_alone(self, db):
+        chosen = datetime(2099, 5, 1, 23, 59)
+        task = Task(
+            type="errand",
+            title="Already dated",
+            estimated_duration=15,
+            importance=1,
+            urgency=1,
+            status="pending",
+            deadline_at=chosen,
+            deadline_auto=False,
+        )
+        db.add(task)
+        db.commit()
+        task_id = task.id
+
+        run_migrations(db.get_bind())
+        db.expire_all()
+
+        task = db.query(Task).filter(Task.id == task_id).first()
+        assert task.deadline_at == chosen
+        assert bool(task.deadline_auto) is False
+
+
+class TestErrandSweepBehaviour:
+    def _add_errand(self, db, title, deadline_at, deadline_auto):
+        task = Task(
+            type="errand",
+            title=title,
+            estimated_duration=15,
+            importance=1,
+            urgency=1,
+            status="pending",
+            deadline_at=deadline_at,
+            deadline_auto=deadline_auto,
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        return task
+
+    def test_expired_auto_deadline_errand_not_swept(self, db):
+        task = self._add_errand(
+            db, "Expired auto", datetime.now() - timedelta(days=30), deadline_auto=True
+        )
+
+        swept = auto_complete_overdue_tasks(db)
+
+        assert swept == []
+        assert db.query(Task).filter(Task.id == task.id).first() is not None
+        assert db.query(CompletedTask).filter(CompletedTask.task_id == task.id).first() is None
+
+    def test_overdue_user_confirmed_errand_is_swept(self, db):
+        task = self._add_errand(
+            db, "Overdue confirmed", datetime.now() - timedelta(days=2), deadline_auto=False
+        )
+        task_id = task.id
+
+        swept = auto_complete_overdue_tasks(db)
+
+        assert len(swept) == 1
+        assert db.query(Task).filter(Task.id == task_id).first() is None
+        completed = db.query(CompletedTask).filter(CompletedTask.task_id == task_id).first()
+        assert completed is not None
+        assert bool(completed.auto_completed) is True
+
+    def test_user_confirmed_errand_due_today_not_swept(self, db):
+        """Due today = pinned all day; the sweep only takes it once the
+        date has fully passed, same as deadline tasks."""
+        task = self._add_errand(
+            db, "Due today confirmed",
+            datetime.combine(date.today(), time(23, 59)),
+            deadline_auto=False,
+        )
+
+        swept = auto_complete_overdue_tasks(db)
+
+        assert swept == []
+        assert db.query(Task).filter(Task.id == task.id).first() is not None
+
+
+class TestErrandPromptEndpoints:
+    def test_errand_deadline_endpoint_sets_date_and_clears_auto(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+        assert data["deadline_auto"] is True
+
+        resp = client.post(
+            f"/tasks/{task_id}/errand-deadline",
+            data={"deadline_date": "2099-05-01"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert "showUndo" in resp.headers.get("hx-trigger", "")
+
+        db.expire_all()
+        task = db.query(Task).filter(Task.id == task_id).first()
+        assert task.deadline_at.date() == date(2099, 5, 1)
+        assert bool(task.deadline_auto) is False
+
+    def test_errand_snooze_endpoint_extends_and_keeps_auto(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+        before = datetime.fromisoformat(data["deadline_at"])
+
+        resp = client.post(f"/tasks/{task_id}/errand-snooze")
+        assert resp.status_code == 200, resp.text
+
+        db.expire_all()
+        task = db.query(Task).filter(Task.id == task_id).first()
+        assert task.deadline_at == before + timedelta(days=182)
+        assert bool(task.deadline_auto) is True
+
+    def test_errand_deadline_endpoint_rejects_non_errand(self, client, db):
+        data = create_task(client, DEADLINE_PAYLOAD)
+
+        resp = client.post(
+            f"/tasks/{data['id']}/errand-deadline",
+            data={"deadline_date": "2099-05-01"},
+        )
+        assert resp.status_code == 400
+
+    def test_prompt_actions_are_undoable(self, client, db):
+        from app.models.action_log import ActionLog
+
+        data = create_task(client, ERRAND_PAYLOAD)
+        task_id = data["id"]
+        original_deadline = datetime.fromisoformat(data["deadline_at"])
+
+        client.post(f"/tasks/{task_id}/errand-deadline", data={"deadline_date": "2099-05-01"})
+        log = db.query(ActionLog).filter(
+            ActionLog.task_id == task_id, ActionLog.action_type == "edit"
+        ).order_by(ActionLog.id.desc()).first()
+        assert log is not None
+
+        client.post(f"/undo/{log.id}")
+        db.expire_all()
+        task = db.query(Task).filter(Task.id == task_id).first()
+        assert task.deadline_at == original_deadline
+        assert bool(task.deadline_auto) is True
+
+
+class TestErrandPromptSelection:
+    def _add_auto_errand(self, db, title, created_days_ago, deadline_in_days):
+        task = Task(
+            type="errand",
+            title=title,
+            estimated_duration=15,
+            importance=1,
+            urgency=1,
+            status="pending",
+            created_at=datetime.now() - timedelta(days=created_days_ago),
+            deadline_at=datetime.now() + timedelta(days=deadline_in_days),
+            deadline_auto=True,
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        return task
+
+    def test_past_half_life_errand_is_prompted(self, db):
+        # span 300d, elapsed 200d -> 66% > 50%
+        task = self._add_auto_errand(db, "Past half-life", 200, 100)
+
+        due = get_errands_due_for_prompt(db)
+        assert task.id in [t.id for t in due]
+
+    def test_fresh_errand_not_prompted(self, db):
+        # span 365d, elapsed 0d
+        task = self._add_auto_errand(db, "Fresh", 0, 365)
+
+        due = get_errands_due_for_prompt(db)
+        assert task.id not in [t.id for t in due]
+
+    def test_user_confirmed_deadline_never_prompted(self, db):
+        task = Task(
+            type="errand",
+            title="Confirmed",
+            estimated_duration=15,
+            importance=1,
+            urgency=1,
+            status="pending",
+            created_at=datetime.now() - timedelta(days=300),
+            deadline_at=datetime.now() + timedelta(days=10),
+            deadline_auto=False,
+        )
+        db.add(task)
+        db.commit()
+
+        due = get_errands_due_for_prompt(db)
+        assert task.id not in [t.id for t in due]
+
+    def test_capped_at_three_with_expired_first(self, db):
+        expired = self._add_auto_errand(db, "Fully expired", 400, -5)
+        for i in range(4):
+            self._add_auto_errand(db, f"Past half-life {i}", 200, 100)
+
+        due = get_errands_due_for_prompt(db)
+        assert len(due) == 3
+        assert due[0].id == expired.id
+
+    def test_banner_endpoint_renders_due_errands(self, client, db):
+        task = self._add_auto_errand(db, "BannerErrandXYZ", 200, 100)
+
+        resp = client.get("/tasks/errand-prompts")
+        assert resp.status_code == 200
+        assert "BannerErrandXYZ" in resp.text
+        assert "When will you actually do this?" in resp.text
+        assert f"/tasks/{task.id}/errand-deadline" in resp.text
+        assert f"/tasks/{task.id}/errand-snooze" in resp.text
+
+    def test_banner_endpoint_empty_when_nothing_due(self, client, db):
+        self._add_auto_errand(db, "Fresh", 0, 365)
+
+        resp = client.get("/tasks/errand-prompts")
+        assert resp.status_code == 200
+        assert "errand-prompt-banner" not in resp.text

@@ -63,7 +63,17 @@ effective_urgency = base                if ratio == 0
 
 So a monthly-ish VRT hits urgency 3 after ~2 weeks overdue; a weekly one after ~3–4 days. See `effective_urgency_for_vrt` in `app/services/prioritisation.py`.
 
-### Other Tasks (errands, plain recurring)
+### Errands
+Every errand is time-bound (Theme A component A4). A new errand created without a deadline gets an **auto-deadline** of `now + errand_auto_deadline_days` (default 365) and `deadline_auto=True`; a user-supplied deadline is respected with `deadline_auto=False`. Existing dateless errands are migrated to `max(created_at + 365d, today + 30d)`.
+
+Urgency runs through the same buffer maths as deadlines, with the user's own urgency setting as a floor (`max(base, computed)`), so a hand-set urgency-3 errand is never downgraded by a distant auto-deadline. The two deadline flavours diverge at the edges:
+
+- **Auto deadline** (`deadline_auto=True`): never due-today pinned, never swept. A fully expired auto-deadline escalates to urgency 3 and re-triggers the half-life prompt; the task stays on the list.
+- **User-confirmed deadline** (`deadline_auto=False`): full deadline semantics — due today ⇒ urgency 3 + pinned; past ⇒ excluded from the list and handled by the auto-complete sweep.
+
+**Half-life prompt:** once `errand_prompt_fraction` (default 0.5, i.e. ~6 months) of an auto-deadline errand's creation→deadline span has elapsed, the daily view shows a banner ("When will you actually do this?", max 3 errands, expired ones first) with a date picker (sets a real deadline, `deadline_auto=False`) and a "+6 months" snooze (extends the auto-deadline, stays auto). See `get_errands_due_for_prompt` and the `/tasks/{id}/errand-deadline` / `/tasks/{id}/errand-snooze` endpoints.
+
+### Other Tasks (plain recurring)
 Manually set at creation time.
 
 ## Tie-Breaking (within same priority score)

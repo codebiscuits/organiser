@@ -1,0 +1,55 @@
+{# Theme A component A4: half-life prompt for auto-deadline errands.
+
+   Rendered into #errand-prompt on the daily view (index.html), which
+   re-fetches on `taskUpdated from:body` — so acting on a row (set date /
+   +6 months) refreshes the banner and the task list together via the
+   explicit htmx.trigger(document.body, 'taskUpdated') pattern this app
+   requires (the HX-Trigger response header alone is unreliable here).
+
+   Dismissal is per-session (sessionStorage), so a taskUpdated re-render
+   doesn't resurrect a banner the user just closed. #}
+{% if errands %}
+<div class="errand-prompt-banner"
+     x-data="{ open: sessionStorage.getItem('errandPromptDismissed') !== '1' }"
+     x-show="open"
+     x-cloak>
+    <div class="errand-prompt-header">
+        <span class="errand-prompt-heading">Still floating</span>
+        <button type="button"
+                class="errand-prompt-close"
+                title="Dismiss"
+                @click="open = false; sessionStorage.setItem('errandPromptDismissed', '1')"
+        >&times;</button>
+    </div>
+    {% for task in errands %}
+    <div class="errand-prompt-row">
+        <div class="errand-prompt-info">
+            <span class="errand-prompt-title">{{ task.title }}</span>
+            <span class="errand-prompt-question">When will you actually do this?</span>
+        </div>
+        <div class="errand-prompt-actions">
+            <input type="date"
+                   class="errand-prompt-date"
+                   name="deadline_date"
+                   id="errand-prompt-date-{{ task.id }}">
+            <button type="button"
+                    class="errand-prompt-btn errand-prompt-btn--set"
+                    hx-post="/tasks/{{ task.id }}/errand-deadline"
+                    hx-include="#errand-prompt-date-{{ task.id }}"
+                    hx-swap="none"
+                    hx-on::before-request="if(!document.getElementById('errand-prompt-date-{{ task.id }}').value){event.preventDefault();}"
+                    hx-on::after-request="htmx.trigger(document.body, 'taskUpdated'); handleUndoHeader(event.detail.xhr)"
+                    title="Commit to this date"
+            >Set date</button>
+            <button type="button"
+                    class="errand-prompt-btn errand-prompt-btn--snooze"
+                    hx-post="/tasks/{{ task.id }}/errand-snooze"
+                    hx-swap="none"
+                    hx-on::after-request="htmx.trigger(document.body, 'taskUpdated'); handleUndoHeader(event.detail.xhr)"
+                    title="Keep floating for another 6 months"
+            >+6 months</button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}

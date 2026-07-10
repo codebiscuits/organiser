@@ -16,6 +16,7 @@ from app.models.preset import TaskPreset
 from app.models.user import User
 from app.models.workout import Exercise, ExerciseMuscle, MuscleGroup, PerformedSet
 from app.models.tag import Tag, TaskTag
+from app.routers.tasks import apply_errand_auto_deadline
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -134,6 +135,7 @@ async def admin_task_create(
         deadline_at=datetime.fromisoformat(deadline_at) if deadline_at else None,
         scheduled_time=time.fromisoformat(scheduled_time) if scheduled_time else None,
     )
+    apply_errand_auto_deadline(task)
     db.add(task)
     db.commit()
     db.refresh(task)

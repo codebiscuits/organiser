@@ -16,6 +16,7 @@ def task_to_dict(task) -> dict:
         "urgency": task.urgency,
         "allow_afternoon": task.allow_afternoon,
         "deadline_at": task.deadline_at.isoformat() if task.deadline_at else None,
+        "deadline_auto": bool(task.deadline_auto),
         "scheduled_at": task.scheduled_at.isoformat() if task.scheduled_at else None,
         "prep_duration": task.prep_duration,
         "scheduled_time": task.scheduled_time.strftime("%H:%M:%S") if task.scheduled_time else None,
@@ -60,6 +61,8 @@ def task_from_dict(snap: dict) -> Task:
         urgency=snap["urgency"],
         allow_afternoon=snap["allow_afternoon"],
         deadline_at=datetime.fromisoformat(snap["deadline_at"]) if snap["deadline_at"] else None,
+        # .get(): snapshots logged before the deadline_auto column existed
+        deadline_auto=bool(snap.get("deadline_auto", False)),
         scheduled_at=datetime.fromisoformat(snap["scheduled_at"]) if snap["scheduled_at"] else None,
         prep_duration=snap["prep_duration"],
         scheduled_time=time_type.fromisoformat(snap["scheduled_time"]) if snap["scheduled_time"] else None,
@@ -82,6 +85,7 @@ def apply_task_dict(task, snap: dict):
     task.urgency = snap["urgency"]
     task.allow_afternoon = snap["allow_afternoon"]
     task.deadline_at = datetime.fromisoformat(snap["deadline_at"]) if snap["deadline_at"] else None
+    task.deadline_auto = bool(snap.get("deadline_auto", False))
     task.scheduled_at = datetime.fromisoformat(snap["scheduled_at"]) if snap["scheduled_at"] else None
     task.prep_duration = snap["prep_duration"]
     task.scheduled_time = time_type.fromisoformat(snap["scheduled_time"]) if snap["scheduled_time"] else None

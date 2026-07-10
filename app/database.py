@@ -28,6 +28,21 @@ def run_migrations(eng):
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )""",
         "ALTER TABLE action_log ADD COLUMN exclusions_snapshot TEXT",
+        "ALTER TABLE tasks ADD COLUMN deadline_auto BOOLEAN NOT NULL DEFAULT 0",
+        # Theme A component A4 data migration: existing errands with no
+        # deadline get an auto-deadline of max(created_at + 365 days,
+        # today + 30 days) — old stock starts moving without anything
+        # becoming instantly urgent. Idempotent: only touches errands whose
+        # deadline_at IS NULL, so re-running on every startup is a no-op
+        # once they're dated. SQLite's scalar MAX compares the ISO-8601
+        # strings lexicographically, which is chronologically correct.
+        """UPDATE tasks
+           SET deadline_at = MAX(
+                   datetime(created_at, '+365 days'),
+                   datetime('now', 'localtime', '+30 days')
+               ),
+               deadline_auto = 1
+           WHERE type = 'errand' AND deadline_at IS NULL""",
     ]
     with eng.connect() as conn:
         for sql in migrations:

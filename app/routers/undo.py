@@ -91,7 +91,9 @@ def _undo_complete(log, db):
         today = date.today()
         if task.type == "appointment" and task.scheduled_at and task.scheduled_at.date() < today:
             task.scheduled_at = datetime.combine(today, task.scheduled_at.time())
-        elif task.type == "deadline" and task.deadline_at and task.deadline_at.date() < today:
+        elif task.type in ("deadline", "errand") and task.deadline_at and task.deadline_at.date() < today:
+            # errand: only user-confirmed errand deadlines are ever swept
+            # (see auto_complete_overdue_tasks), so only those reach here.
             task.deadline_at = datetime.combine(today, task.deadline_at.time())
 
     db.query(Projection).filter(Projection.task_id == log.task_id).delete()

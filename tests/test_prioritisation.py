@@ -1547,3 +1547,158 @@ class TestVrtIntervalFallback:
 
         # interval_days falls back to 7 (weekly), overdue=5, ratio ~0.714 >= 0.5 -> 3
         assert effective_urgency_for_vrt(db, task, projection, FUTURE_DATE) == 3
+
+
+# ===========================================================================
+# Theme A, component A4 — errand auto-deadlines: buffer-based urgency,
+# auto vs user-confirmed deadline semantics. Direct function tests plus
+# get_flexible_tasks presence tests (never gap scheduling — see hazard note).
+# ===========================================================================
+
+class TestEffectiveUrgencyForErrand:
+    def _make_errand(
+        self,
+        urgency: int | None = 1,
+        deadline_at: datetime | None = None,
+        deadline_auto: bool = False,
+        estimated_duration: int = 30,
+    ) -> Task:
+        task = MagicMock(spec=Task)
+        task.type = "errand"
+        task.urgency = urgency
+        task.deadline_at = deadline_at
+        task.deadline_auto = deadline_auto
+        task.estimated_duration = estimated_duration
+        return task
+
+    def test_no_deadline_falls_back_to_base_urgency(self):
+        task = self._make_errand(urgency=2, deadline_at=None)
+        assert effective_urgency_for_errand(task) == (2, False)
+
+    def test_no_deadline_none_urgency_defaults_to_1(self):
+        task = self._make_errand(urgency=None, deadline_at=None)
+        assert effective_urgency_for_errand(task) == (1, False)
+
+    def test_far_auto_deadline_gives_buffer_urgency_1(self):
+        task = self._make_errand(
+            urgency=1,
+            deadline_at=datetime.now() + timedelta(days=300),
+            deadline_auto=True,
+        )
+        assert effective_urgency_for_errand(task) == (1, False)
+
+    def test_user_base_urgency_is_a_floor_over_buffer(self):
+        """A hand-set urgency 3 must not be downgraded by a comfy deadline."""
+        task = self._make_errand(
+            urgency=3,
+            deadline_at=datetime.now() + timedelta(days=300),
+            deadline_auto=True,
+        )
+        assert effective_urgency_for_errand(task) == (3, False)
+
+    def test_near_auto_deadline_raises_urgency(self):
+        task = self._make_errand(
+            urgency=1,
+            deadline_at=datetime.now() + timedelta(days=1),
+            deadline_auto=True,
+        )
+        urgency, due_today = effective_urgency_for_errand(task)
+        assert urgency == 3
+        assert due_today is False
+
+    def test_expired_auto_deadline_escalates_to_3_but_never_pins(self):
+        task = self._make_errand(
+            urgency=1,
+            deadline_at=datetime.now() - timedelta(days=10),
+            deadline_auto=True,
+        )
+        assert effective_urgency_for_errand(task) == (3, False)
+
+    def test_auto_deadline_today_is_not_pinned(self):
+        """Even on its final day an auto-deadline errand is never due-today
+        red — only user-confirmed deadlines get pinning."""
+        task = self._make_errand(
+            urgency=1,
+            deadline_at=datetime.now() + timedelta(hours=2),
+            deadline_auto=True,
+        )
+        urgency, due_today = effective_urgency_for_errand(task)
+        assert due_today is False
+
+    def test_user_confirmed_deadline_due_today_is_pinned(self):
+        task = self._make_errand(
+            urgency=1,
+            deadline_at=datetime.now() + timedelta(hours=2),
+            deadline_auto=False,
+        )
+        assert effective_urgency_for_errand(task) == (3, True)
+
+    def test_user_confirmed_future_deadline_uses_buffer_maths(self):
+        task = self._make_errand(
+            urgency=1,
+            deadline_at=datetime.now() + timedelta(days=5),
+            estimated_duration=120,
+            deadline_auto=False,
+        )
+        # Matches calculate_urgency_for_deadline's 2-7 day buffer band
+        assert effective_urgency_for_errand(task) == (2, False)
+
+
+class TestErrandDeadlineSemanticsDB:
+    """get_flexible_tasks: auto vs user-confirmed errand deadline edges."""
+
+    def _add_errand(self, db, title, deadline_at, deadline_auto, urgency=1):
+        task = Task(
+            type="errand",
+            title=title,
+            estimated_duration=15,
+            importance=2,
+            urgency=urgency,
+            status="pending",
+            deadline_at=deadline_at,
+            deadline_auto=deadline_auto,
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        return task
+
+    def test_expired_auto_deadline_errand_stays_listed_at_urgency_3(self, db):
+        task = self._add_errand(
+            db, "Expired auto", datetime.now() - timedelta(days=5), deadline_auto=True
+        )
+
+        result = get_flexible_tasks(db, date.today())
+        pt = next(p for p in result if p.task.id == task.id)
+        assert pt.calculated_urgency == 3
+        assert pt.due_today is False
+
+    def test_overdue_user_confirmed_errand_excluded_for_sweep(self, db):
+        task = self._add_errand(
+            db, "Overdue confirmed", datetime.now() - timedelta(days=2), deadline_auto=False
+        )
+
+        result = get_flexible_tasks(db, date.today())
+        ids = [p.task.id for p in result]
+        assert task.id not in ids
+
+    def test_user_confirmed_errand_due_today_is_pinned(self, db):
+        task = self._add_errand(
+            db, "Confirmed due today",
+            datetime.combine(date.today(), time(23, 59)),
+            deadline_auto=False,
+        )
+
+        result = get_flexible_tasks(db, date.today())
+        pt = next(p for p in result if p.task.id == task.id)
+        assert pt.due_today is True
+        assert pt.calculated_urgency == 3
+
+    def test_dateless_errand_still_listed_with_base_urgency(self, db):
+        """Legacy row the migration hasn't touched: old behaviour intact."""
+        task = self._add_errand(db, "Dateless", None, deadline_auto=False, urgency=2)
+
+        result = get_flexible_tasks(db, date.today())
+        pt = next(p for p in result if p.task.id == task.id)
+        assert pt.calculated_urgency == 2
+        assert pt.due_today is False

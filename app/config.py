@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     # VRT overdue escalation: overdue_ratio >= this fraction of the task's
     # own cadence pushes effective urgency to 3 (see effective_urgency_for_vrt)
     vrt_escalation_half_ratio: float = 0.5
+
+    # Errand auto-deadlines (Theme A A4): every new errand without a
+    # user-chosen deadline gets deadline_at = now + this many days...
+    errand_auto_deadline_days: int = 365
+    # ...and once this fraction of the creation->deadline span has elapsed,
+    # the daily view prompts "when will you actually do this?"
+    errand_prompt_fraction: float = 0.5
     
     # Push notifications
     vapid_private_key: str = ""

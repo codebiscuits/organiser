@@ -17,7 +17,8 @@ class Task(Base):
     importance = Column(Integer, CheckConstraint("importance BETWEEN 1 AND 3"))
     urgency = Column(Integer, CheckConstraint("urgency BETWEEN 1 AND 3"))  # NULL for calculated types
     allow_afternoon = Column(Boolean, default=False)
-    deadline_at = Column(DateTime)  # for deadlines
+    deadline_at = Column(DateTime)  # for deadlines (and errands — every errand gets one, see deadline_auto)
+    deadline_auto = Column(Boolean, nullable=False, default=False, server_default="0")  # True: deadline_at was auto-set on an errand (Theme A A4); never pinned or swept
     scheduled_at = Column(DateTime)  # for appointments
     prep_duration = Column(Integer)  # minutes, for appointments
     scheduled_time = Column(Time)  # optional, for recurring tasks with fixed daily time
