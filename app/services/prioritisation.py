@@ -51,23 +51,61 @@ class PrioritisedTask:
 def calculate_urgency_for_deadline(task: Task, available_hours_per_day: int = 6) -> int:
     if not task.deadline_at or not task.estimated_duration:
         return 2
-    
+
     now = datetime.now()
     time_remaining = task.deadline_at - now
-    
+
     if time_remaining.total_seconds() <= 3600:
         return 3
-    
+
     hours_needed = task.estimated_duration / 60
     days_of_work_needed = hours_needed / available_hours_per_day
     buffer_days = time_remaining.total_seconds() / 86400 - days_of_work_needed
-    
+
     if buffer_days > settings.urgency_low_threshold:
         return 1
     elif buffer_days >= settings.urgency_medium_threshold:
         return 2
     else:
         return 3
+
+
+def effective_urgency_for_appointment() -> int:
+    """Appointments are always urgency 3 — they're fixed, immovable commitments."""
+    return 3
+
+
+def effective_urgency_for_recurring(task: Task, default: int = 1) -> int:
+    """
+    Effective urgency for a plain recurring (or workout) task: the user's own
+    urgency setting, or `default` if unset.
+
+    `default` differs by placement: time-bound recurring tasks (fixed, in
+    get_fixed_tasks) default to 2; non-time-bound ones (flexible, in
+    get_flexible_tasks) default to 1. This mirrors the pre-refactor inline
+    `task.urgency or 2` / `task.urgency or 1`.
+    """
+    return task.urgency or default
+
+
+def effective_urgency_for_errand(task: Task) -> int:
+    return task.urgency or 1
+
+
+def effective_urgency_for_deadline(
+    task: Task, target_date: date, available_hours_per_day: int = 6
+) -> tuple[int, bool]:
+    """
+    Effective urgency for a deadline task, returning (urgency, due_today).
+
+    due_today is computed against the real `date.today()` (not target_date)
+    — matches the pre-refactor behaviour: a deadline due today is forced to
+    urgency 3 and pinned, regardless of which date's list is being built.
+    """
+    today = date.today()
+    if task.deadline_at and task.deadline_at.date() == today:
+        return 3, True
+    return calculate_urgency_for_deadline(task, available_hours_per_day), False
 
 
 def calculate_priority_score(importance: int, urgency: int) -> int:
@@ -109,10 +147,11 @@ def get_fixed_tasks(db: Session, target_date: date) -> list[PrioritisedTask]:
     for task in appointments:
         if not task.scheduled_at or task.scheduled_at.date() != target_date:
             continue
+        urgency = effective_urgency_for_appointment()
         fixed.append(PrioritisedTask(
             task=task,
-            priority_score=calculate_priority_score(task.importance, 3),
-            calculated_urgency=3,
+            priority_score=calculate_priority_score(task.importance, urgency),
+            calculated_urgency=urgency,
             recurrence_timescale=RecurrenceTimescale.NONE,
             is_fixed=True,
             scheduled_time=task.scheduled_at,
@@ -130,7 +169,7 @@ def get_fixed_tasks(db: Session, target_date: date) -> list[PrioritisedTask]:
         
         for task in recurring_tasks:
             scheduled_today = datetime.combine(target_date, task.scheduled_time)
-            urgency = task.urgency or 2
+            urgency = effective_urgency_for_recurring(task, default=2)
             timescale = get_recurrence_timescale(db, task)
             fixed.append(PrioritisedTask(
                 task=task,
@@ -157,21 +196,11 @@ def get_flexible_tasks(db: Session, target_date: date, available_hours_per_day: 
         or_(Task.snooze_until.is_(None), Task.snooze_until <= str(target_date)),
     ).all()
     
-    today = date.today()
     for task in deadlines:
-        due_today = False
-        if task.deadline_at:
-            deadline_date = task.deadline_at.date()
-            if deadline_date < target_date:
-                # Already overdue — handled by the auto-complete sweep.
-                continue
-            if deadline_date == today:
-                urgency = 3
-                due_today = True
-            else:
-                urgency = calculate_urgency_for_deadline(task, available_hours_per_day)
-        else:
-            urgency = calculate_urgency_for_deadline(task, available_hours_per_day)
+        if task.deadline_at and task.deadline_at.date() < target_date:
+            # Already overdue — handled by the auto-complete sweep.
+            continue
+        urgency, due_today = effective_urgency_for_deadline(task, target_date, available_hours_per_day)
         flexible.append(PrioritisedTask(
             task=task,
             priority_score=calculate_priority_score(task.importance, urgency),
@@ -192,7 +221,7 @@ def get_flexible_tasks(db: Session, target_date: date, available_hours_per_day: 
         ).all()
         
         for task in recurring_tasks:
-            urgency = task.urgency or 1
+            urgency = effective_urgency_for_recurring(task, default=1)
             timescale = get_recurrence_timescale(db, task)
             flexible.append(PrioritisedTask(
                 task=task,
@@ -201,15 +230,15 @@ def get_flexible_tasks(db: Session, target_date: date, available_hours_per_day: 
                 recurrence_timescale=timescale,
                 is_fixed=False,
             ))
-    
+
     errands = db.query(Task).filter(
         Task.type == "errand",
         Task.status == "pending",
         or_(Task.snooze_until.is_(None), Task.snooze_until <= str(target_date)),
     ).all()
-    
+
     for task in errands:
-        urgency = task.urgency or 1
+        urgency = effective_urgency_for_errand(task)
         flexible.append(PrioritisedTask(
             task=task,
             priority_score=calculate_priority_score(task.importance, urgency),
