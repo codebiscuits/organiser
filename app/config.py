@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     # Urgency thresholds (days)
     urgency_low_threshold: int = 7
     urgency_medium_threshold: int = 2
+
+    # VRT overdue escalation: overdue_ratio >= this fraction of the task's
+    # own cadence pushes effective urgency to 3 (see effective_urgency_for_vrt)
+    vrt_escalation_half_ratio: float = 0.5
     
     # Push notifications
     vapid_private_key: str = ""

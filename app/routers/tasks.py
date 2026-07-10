@@ -732,10 +732,12 @@ async def complete_variable_recurring_task(
     db.add(completed)
     db.flush()
 
-    db.query(Projection).filter(
-        Projection.task_id == task_id,
-        Projection.due_date >= date.today()
-    ).delete()
+    # Delete every existing projection for this task, not just
+    # due_date >= today: a VRT has exactly one open projection at a time,
+    # but a carried-forward (overdue) one has due_date < today and would
+    # otherwise survive completion as a stale phantom row (Theme A
+    # component A2 — see docs/design-theme-a.md §3).
+    db.query(Projection).filter(Projection.task_id == task_id).delete()
 
     next_date = date.today() + timedelta(days=days_until_next)
     if task.allowed_days:
@@ -905,10 +907,22 @@ async def defer_task(request: Request, task_id: str, db: Session = Depends(get_d
 
     task.deferred_count = (task.deferred_count or 0) + 1
 
-    today_projection = db.query(Projection).filter(
-        Projection.task_id == task_id,
-        Projection.due_date == date.today()
-    ).first()
+    if task.type == "variable_recurring":
+        # VRT projections can be carried forward from a past due_date
+        # (Theme A component A2 — overdue VRTs stay visible until
+        # completed). Deferring one must find that past-dated projection
+        # too, not just an exact due_date == today match, otherwise the
+        # defer silently falls through to the snooze_until branch below —
+        # which VRTs don't respect, so the task wouldn't actually move.
+        today_projection = db.query(Projection).filter(
+            Projection.task_id == task_id,
+            Projection.due_date <= date.today(),
+        ).order_by(Projection.due_date.asc()).first()
+    else:
+        today_projection = db.query(Projection).filter(
+            Projection.task_id == task_id,
+            Projection.due_date == date.today()
+        ).first()
 
     if today_projection:
         tomorrow = date.today() + timedelta(days=1)
@@ -974,22 +988,39 @@ async def delete_task_instance(task_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Task not found")
 
     today = date.today()
-    deleted = db.query(Projection).filter(
-        Projection.task_id == task_id,
-        Projection.due_date == today,
-    ).delete()
+    if task.type == "variable_recurring":
+        # A carried-forward VRT (Theme A component A2) has due_date < today,
+        # not == today — find its actual (earliest, if stragglers exist)
+        # projection instead of assuming "today only" like other recurring
+        # types. The exclusion tombstone and undo snapshot must key off that
+        # real due_date, not `today`, or undo would restore/un-exclude the
+        # wrong date.
+        target_projection = db.query(Projection).filter(
+            Projection.task_id == task_id,
+            Projection.due_date <= today,
+        ).order_by(Projection.due_date.asc()).first()
+        if not target_projection:
+            raise HTTPException(status_code=404, detail="No projection for today")
+        instance_date = target_projection.due_date
+        db.delete(target_projection)
+    else:
+        deleted = db.query(Projection).filter(
+            Projection.task_id == task_id,
+            Projection.due_date == today,
+        ).delete()
 
-    if deleted == 0:
-        raise HTTPException(status_code=404, detail="No projection for today")
+        if deleted == 0:
+            raise HTTPException(status_code=404, detail="No projection for today")
+        instance_date = today
 
-    _record_exclusion(db, task_id, today)
+    _record_exclusion(db, task_id, instance_date)
 
     task_title = task.title
     log = ActionLog(
         action_type="delete_instance",
         task_id=task_id,
         task_title=task_title,
-        projections_snapshot=json.dumps([today.isoformat()]),
+        projections_snapshot=json.dumps([instance_date.isoformat()]),
     )
     db.add(log)
     _prune_old_logs(db)

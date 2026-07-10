@@ -5,8 +5,9 @@ from sqlalchemy.orm import Session
 
 FUTURE_DATE = date(2099, 1, 15)
 
-from app.models.task import Task
+from app.models.task import Task, CompletedTask
 from app.models.recurrence import Recurrence, Projection
+from app.config import settings
 from app.services.prioritisation import (
     get_fixed_tasks,
     get_flexible_tasks,
@@ -22,6 +23,11 @@ from app.services.prioritisation import (
     split_gap,
     schedule_tasks_into_timeline,
     bin_tasks_by_priority,
+    effective_urgency_for_vrt,
+    effective_urgency_for_recurring,
+    effective_urgency_for_errand,
+    effective_urgency_for_deadline,
+    effective_urgency_for_appointment,
     PrioritisedTask,
     RecurrenceTimescale,
     TimeSlot,
@@ -1244,3 +1250,300 @@ class TestGetRemainingCapacityDB:
         assert result["main"] == 0
         assert result["afternoon"] == 0
         assert result["is_overbooked"] is True
+
+
+# ===========================================================================
+# Theme A, step 2 — component A2: VRT carry-forward + cadence-relative
+# escalation. Per the test hazard noted in the design brief, these test
+# urgency functions directly and list-presence via get_flexible_tasks —
+# never get_prioritised_tasks / gap scheduling, which reads the real clock.
+# ===========================================================================
+
+class TestVrtCarryForwardDB:
+    """get_flexible_tasks: a VRT projection with due_date <= target_date
+    carries forward (stays visible until completed); plain recurring tasks
+    keep exact-date matching and do NOT carry forward a missed instance."""
+
+    def test_overdue_vrt_appears_in_flexible_for_today(self, db):
+        task = Task(
+            type="variable_recurring",
+            title="Overdue VRT",
+            estimated_duration=30,
+            importance=2,
+            urgency=1,
+            status="pending",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        proj = Projection(task_id=task.id, due_date=date.today() - timedelta(days=5))
+        db.add(proj)
+        db.commit()
+
+        result = get_flexible_tasks(db, date.today())
+        ids = [pt.task.id for pt in result]
+        assert task.id in ids
+
+    def test_plain_recurring_with_past_projection_does_not_carry_forward(self, db):
+        task = Task(
+            type="recurring",
+            title="Missed recurring",
+            scheduled_time=None,
+            estimated_duration=30,
+            importance=2,
+            urgency=1,
+            status="pending",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        proj = Projection(task_id=task.id, due_date=date.today() - timedelta(days=5))
+        db.add(proj)
+        db.commit()
+
+        result = get_flexible_tasks(db, date.today())
+        ids = [pt.task.id for pt in result]
+        assert task.id not in ids
+
+    def test_vrt_on_target_date_still_appears(self, db):
+        """Sanity check: carry-forward (<=) must not break the ordinary
+        due-today case."""
+        task = Task(
+            type="variable_recurring",
+            title="Due today VRT",
+            estimated_duration=30,
+            importance=2,
+            urgency=1,
+            status="pending",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        db.add(Projection(task_id=task.id, due_date=date.today()))
+        db.commit()
+
+        result = get_flexible_tasks(db, date.today())
+        ids = [pt.task.id for pt in result]
+        assert task.id in ids
+
+    def test_vrt_with_multiple_past_projections_included_once_using_earliest(self, db):
+        """Defensive: if a VRT somehow has multiple uncompleted past
+        projections, get_flexible_tasks includes the task exactly once."""
+        task = Task(
+            type="variable_recurring",
+            title="Straggler VRT",
+            estimated_duration=30,
+            importance=2,
+            urgency=1,
+            status="pending",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        db.add_all([
+            Projection(task_id=task.id, due_date=date.today() - timedelta(days=10)),
+            Projection(task_id=task.id, due_date=date.today() - timedelta(days=3)),
+        ])
+        db.commit()
+
+        result = get_flexible_tasks(db, date.today())
+        matching = [pt for pt in result if pt.task.id == task.id]
+        assert len(matching) == 1
+
+    def test_overdue_vrt_priority_score_reflects_escalated_urgency(self, db):
+        task = Task(
+            type="variable_recurring",
+            title="Escalated VRT",
+            estimated_duration=30,
+            importance=2,
+            urgency=1,
+            status="pending",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        db.add(Recurrence(
+            task_id=task.id, interval_type="weekly", interval_multiple=1,
+            start_date=date(2026, 1, 1),
+        ))
+        due_date = date.today() - timedelta(days=5)
+        db.add(Projection(task_id=task.id, due_date=due_date))
+        db.commit()
+
+        result = get_flexible_tasks(db, date.today())
+        pt = next(p for p in result if p.task.id == task.id)
+        # overdue_days=5, interval_days=7 (weekly) -> ratio ~0.71 >= 0.5 -> urgency 3
+        assert pt.calculated_urgency == 3
+        assert pt.priority_score == 2 * 3
+
+
+class TestEffectiveUrgencyForVrt:
+    """Direct tests of the escalation tiers (component A2)."""
+
+    def _make_vrt(self, db, urgency: int = 1) -> Task:
+        task = Task(
+            type="variable_recurring",
+            title="VRT",
+            estimated_duration=30,
+            importance=2,
+            urgency=urgency,
+            status="pending",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        return task
+
+    def test_ratio_zero_keeps_base_urgency(self, db):
+        task = self._make_vrt(db, urgency=1)
+        projection = Projection(task_id=task.id, due_date=FUTURE_DATE)
+
+        assert effective_urgency_for_vrt(db, task, projection, FUTURE_DATE) == 1
+
+    def test_small_ratio_bumps_to_at_least_2(self, db):
+        task = self._make_vrt(db, urgency=1)
+        db.add(Recurrence(
+            task_id=task.id, interval_type="weekly", interval_multiple=1,
+            start_date=date(2026, 1, 1),
+        ))
+        db.commit()
+        due_date = FUTURE_DATE - timedelta(days=2)
+        projection = Projection(task_id=task.id, due_date=due_date)
+
+        # interval_days=7, overdue_days=2, ratio ~0.286 < 0.5 -> max(1, 2) = 2
+        assert effective_urgency_for_vrt(db, task, projection, FUTURE_DATE) == 2
+
+    def test_ratio_past_threshold_gives_3(self, db):
+        task = self._make_vrt(db, urgency=1)
+        db.add(Recurrence(
+            task_id=task.id, interval_type="weekly", interval_multiple=1,
+            start_date=date(2026, 1, 1),
+        ))
+        db.commit()
+        due_date = FUTURE_DATE - timedelta(days=5)
+        projection = Projection(task_id=task.id, due_date=due_date)
+
+        # interval_days=7, overdue_days=5, ratio ~0.714 >= 0.5 -> 3
+        assert effective_urgency_for_vrt(db, task, projection, FUTURE_DATE) == 3
+
+    def test_small_ratio_respects_higher_base_urgency(self, db):
+        task = self._make_vrt(db, urgency=3)
+        db.add(Recurrence(
+            task_id=task.id, interval_type="weekly", interval_multiple=1,
+            start_date=date(2026, 1, 1),
+        ))
+        db.commit()
+        due_date = FUTURE_DATE - timedelta(days=2)
+        projection = Projection(task_id=task.id, due_date=due_date)
+
+        # base=3, max(base, 2) = 3
+        assert effective_urgency_for_vrt(db, task, projection, FUTURE_DATE) == 3
+
+    def test_ratio_exactly_at_threshold_gives_3(self, db):
+        task = self._make_vrt(db, urgency=1)
+        # Daily recurrence with interval_multiple=10 -> interval_days=10, so
+        # an exact half-cadence (5 days) overdue lands ratio == 0.5 exactly.
+        db.add(Recurrence(
+            task_id=task.id, interval_type="daily", interval_multiple=10,
+            start_date=date(2026, 1, 1),
+        ))
+        db.commit()
+        interval_days = 10
+        due_date = FUTURE_DATE - timedelta(days=int(interval_days * settings.vrt_escalation_half_ratio))
+        projection = Projection(task_id=task.id, due_date=due_date)
+
+        assert effective_urgency_for_vrt(db, task, projection, FUTURE_DATE) == 3
+
+
+class TestVrtIntervalFallback:
+    """interval_days: completion history > recurrence interval > flat 30."""
+
+    def _make_vrt(self, db, urgency: int = 1) -> Task:
+        task = Task(
+            type="variable_recurring",
+            title="VRT",
+            estimated_duration=30,
+            importance=2,
+            urgency=urgency,
+            status="pending",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        return task
+
+    def test_no_completion_no_recurrence_uses_30_day_fallback_high_ratio(self, db):
+        task = self._make_vrt(db)
+        due_date = FUTURE_DATE - timedelta(days=20)
+        projection = Projection(task_id=task.id, due_date=due_date)
+
+        # interval_days=30 (final fallback), overdue=20, ratio ~0.667 >= 0.5 -> 3
+        assert effective_urgency_for_vrt(db, task, projection, FUTURE_DATE) == 3
+
+    def test_no_completion_no_recurrence_uses_30_day_fallback_low_ratio(self, db):
+        task = self._make_vrt(db)
+        due_date = FUTURE_DATE - timedelta(days=5)
+        projection = Projection(task_id=task.id, due_date=due_date)
+
+        # interval_days=30, overdue=5, ratio ~0.167 < 0.5 -> max(1, 2) = 2
+        assert effective_urgency_for_vrt(db, task, projection, FUTURE_DATE) == 2
+
+    def test_recurrence_interval_used_when_no_completion_row(self, db):
+        task = self._make_vrt(db)
+        db.add(Recurrence(
+            task_id=task.id, interval_type="monthly", interval_multiple=1,
+            start_date=date(2026, 1, 1),
+        ))
+        db.commit()
+        due_date = FUTURE_DATE - timedelta(days=16)
+        projection = Projection(task_id=task.id, due_date=due_date)
+
+        # interval_days=30 (monthly), overdue=16, ratio ~0.533 >= 0.5 -> 3
+        assert effective_urgency_for_vrt(db, task, projection, FUTURE_DATE) == 3
+
+    def test_completion_history_interval_overrides_recurrence(self, db):
+        task = self._make_vrt(db)
+        db.add(Recurrence(
+            task_id=task.id, interval_type="monthly", interval_multiple=1,
+            start_date=date(2026, 1, 1),
+        ))
+        due_date = FUTURE_DATE - timedelta(days=3)
+        completed_at = due_date - timedelta(days=7)  # actual last cadence: 7 days
+        db.add(CompletedTask(
+            task_id=task.id,
+            completed_at=datetime.combine(completed_at, time(9, 0)),
+            task_type="variable_recurring",
+            task_title="VRT",
+        ))
+        db.commit()
+        projection = Projection(task_id=task.id, due_date=due_date)
+
+        # interval_days=7 (from completion, not the monthly recurrence),
+        # overdue=3, ratio ~0.43 < 0.5 -> max(1, 2) = 2
+        assert effective_urgency_for_vrt(db, task, projection, FUTURE_DATE) == 2
+
+    def test_zero_interval_from_completion_falls_back_to_recurrence(self, db):
+        """If completed_at == due_date (interval_days would be 0), the guard
+        rejects it and falls back to the recurrence interval instead."""
+        task = self._make_vrt(db)
+        db.add(Recurrence(
+            task_id=task.id, interval_type="weekly", interval_multiple=1,
+            start_date=date(2026, 1, 1),
+        ))
+        due_date = FUTURE_DATE - timedelta(days=5)
+        db.add(CompletedTask(
+            task_id=task.id,
+            completed_at=datetime.combine(due_date, time(9, 0)),
+            task_type="variable_recurring",
+            task_title="VRT",
+        ))
+        db.commit()
+        projection = Projection(task_id=task.id, due_date=due_date)
+
+        # interval_days falls back to 7 (weekly), overdue=5, ratio ~0.714 >= 0.5 -> 3
+        assert effective_urgency_for_vrt(db, task, projection, FUTURE_DATE) == 3

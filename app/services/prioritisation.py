@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.models.task import Task
+from app.models.task import Task, CompletedTask
 from app.models.recurrence import Projection, Recurrence
 from app.config import settings
 from app.services.workout_algorithm import select_todays_exercises
@@ -106,6 +106,68 @@ def effective_urgency_for_deadline(
     if task.deadline_at and task.deadline_at.date() == today:
         return 3, True
     return calculate_urgency_for_deadline(task, available_hours_per_day), False
+
+
+def _vrt_interval_days(db: Session, task: Task, due_date: date) -> int:
+    """
+    Cadence length (in days) used as the denominator of a VRT's overdue_ratio.
+
+    Prefers the gap between the task's most recent completion and this
+    projection's due date (how long the task actually took last cycle);
+    falls back to the Recurrence's nominal interval (interval_multiple ×
+    {daily:1, weekly:7, monthly:30, yearly:365}), then to a flat 30 days.
+    Always >= 1.
+    """
+    latest_completion = (
+        db.query(CompletedTask)
+        .filter(CompletedTask.task_id == task.id)
+        .order_by(CompletedTask.completed_at.desc())
+        .first()
+    )
+    if latest_completion and latest_completion.completed_at:
+        completed_at = latest_completion.completed_at
+        completed_date = completed_at.date() if isinstance(completed_at, datetime) else completed_at
+        interval_days = (due_date - completed_date).days
+        if interval_days >= 1:
+            return interval_days
+
+    recurrence = db.query(Recurrence).filter(Recurrence.task_id == task.id).first()
+    if recurrence:
+        days_per_unit = {"daily": 1, "weekly": 7, "monthly": 30, "yearly": 365}
+        unit_days = days_per_unit.get(recurrence.interval_type)
+        if unit_days:
+            interval_days = (recurrence.interval_multiple or 1) * unit_days
+            if interval_days >= 1:
+                return interval_days
+
+    return 30
+
+
+def effective_urgency_for_vrt(
+    db: Session, task: Task, projection: Projection, target_date: date
+) -> int:
+    """
+    Effective urgency for a variable_recurring task (Theme A component A2):
+    escalates with overdue-ness *relative to the task's own cadence*, so
+    "N days late" means more for a weekly task than a quarterly one.
+
+        overdue_ratio = max(0, target_date - due_date) / interval_days
+
+        effective_urgency = base                if ratio == 0
+                             max(base, 2)        if 0 < ratio < vrt_escalation_half_ratio
+                             3                   if ratio >= vrt_escalation_half_ratio
+    """
+    base = task.urgency or 1
+    overdue_days = max(0, (target_date - projection.due_date).days)
+    if overdue_days == 0:
+        return base
+
+    interval_days = max(1, _vrt_interval_days(db, task, projection.due_date))
+    overdue_ratio = overdue_days / interval_days
+
+    if overdue_ratio >= settings.vrt_escalation_half_ratio:
+        return 3
+    return max(base, 2)
 
 
 def calculate_priority_score(importance: int, urgency: int) -> int:
@@ -210,16 +272,20 @@ def get_flexible_tasks(db: Session, target_date: date, available_hours_per_day: 
             due_today=due_today,
         ))
     
+    # Plain recurring/workout: exact-date match only. Their future projections
+    # already exist (generated up to 90 days out), so a missed instance
+    # self-heals on its own next occurrence rather than carrying forward.
     projections = db.query(Projection).filter(Projection.due_date == target_date).all()
     recurring_task_ids = [p.task_id for p in projections]
-    
+
     if recurring_task_ids:
         recurring_tasks = db.query(Task).filter(
             Task.id.in_(recurring_task_ids),
             Task.status == "pending",
             Task.scheduled_time.is_(None),
+            Task.type != "variable_recurring",
         ).all()
-        
+
         for task in recurring_tasks:
             urgency = effective_urgency_for_recurring(task, default=1)
             timescale = get_recurrence_timescale(db, task)
@@ -230,6 +296,40 @@ def get_flexible_tasks(db: Session, target_date: date, available_hours_per_day: 
                 recurrence_timescale=timescale,
                 is_fixed=False,
             ))
+
+    # Variable recurring: carry-forward. A VRT has exactly one
+    # completion-driven Projection at a time, so an uncompleted one must
+    # stay visible every day until completed — due_date <= target_date
+    # (not ==), otherwise it vanishes forever the day after it's missed
+    # (Theme A component A2; see docs/design-theme-a.md §3).
+    vrt_rows = (
+        db.query(Projection, Task)
+        .join(Task, Projection.task_id == Task.id)
+        .filter(
+            Projection.due_date <= target_date,
+            Task.type == "variable_recurring",
+            Task.status == "pending",
+            Task.scheduled_time.is_(None),
+        )
+        .order_by(Projection.due_date.asc())
+        .all()
+    )
+    seen_vrt_task_ids: set[str] = set()
+    for projection, task in vrt_rows:
+        if task.id in seen_vrt_task_ids:
+            # A VRT should only ever have one open projection; if stragglers
+            # exist, use the earliest uncompleted one and include it once.
+            continue
+        seen_vrt_task_ids.add(task.id)
+        urgency = effective_urgency_for_vrt(db, task, projection, target_date)
+        timescale = get_recurrence_timescale(db, task)
+        flexible.append(PrioritisedTask(
+            task=task,
+            priority_score=calculate_priority_score(task.importance, urgency),
+            calculated_urgency=urgency,
+            recurrence_timescale=timescale,
+            is_fixed=False,
+        ))
 
     errands = db.query(Task).filter(
         Task.type == "errand",

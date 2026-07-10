@@ -46,7 +46,24 @@ Urgency mapping:
 
 A deadline whose date is **before** today is excluded from `get_flexible_tasks` entirely — it's handled by the overdue auto-complete sweep instead (see `docs/task_completion.md`).
 
-### Other Tasks
+### Variable Recurring Tasks (VRTs)
+Unlike plain recurring tasks, a VRT's single completion-driven projection **carries forward**: `get_flexible_tasks` matches `due_date <= target_date` (not `==`) for VRTs specifically, so an uncompleted VRT stays on the list every day until completed instead of vanishing once its date passes. Plain recurring/workout tasks keep exact-date matching — their future projections already exist, so a missed instance self-heals on its own.
+
+Effective urgency escalates with overdue-ness *relative to the task's own cadence*:
+
+```
+interval_days = days between the task's last completion and the projection's due date
+                (fallback: recurrence interval in days, else 30; always >= 1)
+overdue_ratio = max(0, target_date - due_date) / interval_days
+
+effective_urgency = base                if ratio == 0
+                    max(base, 2)        if 0 < ratio < vrt_escalation_half_ratio (default 0.5)
+                    3                   if ratio >= vrt_escalation_half_ratio
+```
+
+So a monthly-ish VRT hits urgency 3 after ~2 weeks overdue; a weekly one after ~3–4 days. See `effective_urgency_for_vrt` in `app/services/prioritisation.py`.
+
+### Other Tasks (errands, plain recurring)
 Manually set at creation time.
 
 ## Tie-Breaking (within same priority score)

@@ -606,6 +606,45 @@ class TestDeleteInstance:
         resp = client.post(f"/tasks/{task_id}/delete-instance")
         assert resp.status_code == 404
 
+    def test_delete_instance_finds_carried_forward_vrt_projection(self, client, db):
+        """
+        Theme A component A2: a VRT's carried-forward projection can have
+        due_date < today (see docs/design-theme-a.md §3). "Delete today
+        only" must find and remove that past-dated projection instead of
+        assuming due_date == today and 404ing.
+        """
+        from app.models.recurrence import ProjectionExclusion
+
+        payload = {
+            "type": "variable_recurring",
+            "title": "Overdue VRT",
+            "importance": 2,
+            "urgency": 2,
+            "estimated_duration": 60,
+            "recurrence": {
+                "interval_type": "monthly",
+                "interval_multiple": 1,
+                "start_date": "2026-01-01T00:00:00",
+            },
+        }
+        data = create_task(client, payload)
+        task_id = data["id"]
+
+        db.query(Projection).filter(Projection.task_id == task_id).delete()
+        past_due = date.today() - timedelta(days=6)
+        db.add(Projection(task_id=task_id, due_date=past_due))
+        db.commit()
+
+        resp = client.post(f"/tasks/{task_id}/delete-instance")
+        assert resp.status_code == 200, resp.text
+
+        assert db.query(Projection).filter(
+            Projection.task_id == task_id, Projection.due_date == past_due
+        ).first() is None
+        assert db.query(ProjectionExclusion).filter(
+            ProjectionExclusion.task_id == task_id, ProjectionExclusion.due_date == past_due
+        ).first() is not None
+
     def test_delete_instance_not_resurrected_by_regeneration(self, client, db):
         """
         Regression test: "delete today only" must survive a projection
@@ -782,6 +821,99 @@ class TestVariableRecurringCompletion:
             Projection.task_id == task_id,
             Projection.due_date == target_date,
         ).first() is not None
+
+
+# ---------------------------------------------------------------------------
+# Theme A, component A2 — carried-forward (overdue) VRT completion/defer.
+#
+# A VRT projection can now have due_date < today (carried forward instead of
+# vanishing — see docs/design-theme-a.md §3 A2). These endpoints used to
+# assume due_date == today / >= today for a VRT's single open projection;
+# they must find and act on the past-dated one too.
+# ---------------------------------------------------------------------------
+
+class TestCarriedForwardVrtCompletion:
+    def _make_variable_recurring(self, client, db):
+        payload = {
+            "type": "variable_recurring",
+            "title": "Overdue VRT",
+            "importance": 2,
+            "urgency": 2,
+            "estimated_duration": 60,
+            "recurrence": {
+                "interval_type": "monthly",
+                "interval_multiple": 1,
+                "start_date": "2026-01-01T00:00:00",
+            },
+        }
+        return create_task(client, payload)
+
+    def _carry_forward(self, db, task_id: str, days_overdue: int) -> date:
+        """Replace whatever anchor projection create_task made with a single
+        past-dated one, simulating an overdue carried-forward VRT."""
+        db.query(Projection).filter(Projection.task_id == task_id).delete()
+        past_due = date.today() - timedelta(days=days_overdue)
+        db.add(Projection(task_id=task_id, due_date=past_due))
+        db.commit()
+        return past_due
+
+    def test_completing_carried_forward_vrt_removes_past_projection(self, client, db):
+        data = self._make_variable_recurring(client, db)
+        task_id = data["id"]
+        past_due = self._carry_forward(db, task_id, days_overdue=10)
+
+        resp = client.post(
+            f"/tasks/{task_id}/complete/variable",
+            data={"days_until_next": 14},
+        )
+        assert resp.status_code == 200, resp.text
+
+        # The past-dated projection must be gone, not just filtered by
+        # due_date >= today (the pre-fix behaviour left it as a phantom row).
+        assert db.query(Projection).filter(
+            Projection.task_id == task_id, Projection.due_date == past_due
+        ).first() is None
+
+    def test_completing_carried_forward_vrt_schedules_next_occurrence(self, client, db):
+        data = self._make_variable_recurring(client, db)
+        task_id = data["id"]
+        self._carry_forward(db, task_id, days_overdue=10)
+
+        client.post(
+            f"/tasks/{task_id}/complete/variable",
+            data={"days_until_next": 14},
+        )
+
+        expected_next = date.today() + timedelta(days=14)
+        remaining = db.query(Projection).filter(Projection.task_id == task_id).all()
+        assert len(remaining) == 1
+        assert remaining[0].due_date == expected_next
+
+    def test_carried_forward_vrt_complete_form_still_accessible(self, client, db):
+        """The 'when next?' prompt (GET .../complete/variable) is keyed off
+        task type, not date — a carried-forward VRT must still get it."""
+        data = self._make_variable_recurring(client, db)
+        task_id = data["id"]
+        self._carry_forward(db, task_id, days_overdue=10)
+
+        resp = client.get(f"/tasks/{task_id}/complete/variable")
+        assert resp.status_code == 200
+
+    def test_deferring_carried_forward_vrt_moves_projection_to_tomorrow(self, client, db):
+        data = self._make_variable_recurring(client, db)
+        task_id = data["id"]
+        past_due = self._carry_forward(db, task_id, days_overdue=4)
+
+        resp = client.post(f"/tasks/{task_id}/defer")
+        assert resp.status_code == 200, resp.text
+
+        tomorrow = date.today() + timedelta(days=1)
+        assert db.query(Projection).filter(
+            Projection.task_id == task_id, Projection.due_date == tomorrow
+        ).first() is not None
+        assert db.query(Projection).filter(
+            Projection.task_id == task_id, Projection.due_date == past_due
+        ).first() is None
 
 
 # ---------------------------------------------------------------------------
