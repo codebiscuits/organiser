@@ -29,6 +29,10 @@ class Task(Base):
     manual_scheduled_time = Column(DateTime)  # user-set time from timeline drag-and-drop
     preset_id = Column(Integer, ForeignKey("task_presets.id"), nullable=True)
     allowed_days = Column(String)  # comma-separated day indices, Sunday=0
+    # Theme A A5: id of the task this one was auto-generated from (prep tasks;
+    # later reused by tag-recipe auto-tasks). Plain string, no FK — the parent
+    # may be hard-deleted while a completed child's history row survives.
+    generated_from_task_id = Column(String)
     push_notified_at = Column(DateTime)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

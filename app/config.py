@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     # own cadence pushes effective urgency to 3 (see effective_urgency_for_vrt)
     vrt_escalation_half_ratio: float = 0.5
 
+    # Auto-generated prep task for long deadlines (Theme A A5):
+    # created at prep_task_fraction of the creation->deadline span, only for
+    # deadlines at least prep_task_min_span_days long
+    prep_task_fraction: float = 0.75
+    prep_task_min_span_days: int = 14
+
     # Errand auto-deadlines (Theme A A4): every new errand without a
     # user-chosen deadline gets deadline_at = now + this many days...
     errand_auto_deadline_days: int = 365

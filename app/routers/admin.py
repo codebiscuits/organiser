@@ -17,6 +17,7 @@ from app.models.user import User
 from app.models.workout import Exercise, ExerciseMuscle, MuscleGroup, PerformedSet
 from app.models.tag import Tag, TaskTag
 from app.routers.tasks import apply_errand_auto_deadline
+from app.services.prep_tasks import sync_prep_task, delete_pending_prep_tasks
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -139,6 +140,8 @@ async def admin_task_create(
     db.add(task)
     db.commit()
     db.refresh(task)
+    sync_prep_task(db, task)
+    db.commit()
 
     if type in ("recurring", "variable_recurring", "workout") and interval_type:
         recurrence = Recurrence(
@@ -277,6 +280,7 @@ async def admin_task_delete(task_id: str, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id).first()
     if task:
         delete_task_children(db, task_id)
+        delete_pending_prep_tasks(db, task_id)
         db.delete(task)
         db.commit()
     return Response(status_code=200)

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.models.task import Task, CompletedTask
+from app.services.prep_tasks import sync_prep_task, delete_pending_prep_tasks
 from app.models.recurrence import Recurrence, Projection, ProjectionExclusion
 from app.models.action_log import ActionLog
 from app.models.tag import Tag, TaskTag
@@ -191,6 +192,7 @@ def auto_complete_overdue_tasks(db: Session) -> list[tuple[int, str]]:
         db.add(completed)
         db.flush()
 
+        delete_pending_prep_tasks(db, task.id)
         db.delete(task)
 
         log = ActionLog(
@@ -757,6 +759,7 @@ async def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
     apply_errand_auto_deadline(task)
     db.add(task)
     db.flush()
+    sync_prep_task(db, task)
 
     if task_data.type.value in ("recurring", "workout", "variable_recurring") and task_data.recurrence:
         _build_recurrence_and_projections(db, task.id, task_data.type.value, task_data.recurrence)
@@ -826,6 +829,8 @@ async def complete_task(
     ).delete()
 
     if task.type in ("errand", "appointment", "deadline"):
+        # A finished deadline's pending auto prep task is noise (A5).
+        delete_pending_prep_tasks(db, task_id)
         db.delete(task)
 
     log = ActionLog(
@@ -1234,6 +1239,7 @@ async def delete_task(request: Request, task_id: str, db: Session = Depends(get_
     ))
 
     delete_task_children(db, task_id)
+    delete_pending_prep_tasks(db, task_id)
     db.delete(task)
 
     log = ActionLog(
@@ -1374,6 +1380,7 @@ def _replace_task_for_type_change(db: Session, old_task: Task, task_data: TaskUp
     apply_errand_auto_deadline(new_task)
     db.add(new_task)
     db.flush()
+    sync_prep_task(db, new_task)
 
     if new_type in ("recurring", "workout", "variable_recurring"):
         _build_recurrence_and_projections(db, new_task.id, new_type, task_data.recurrence)
@@ -1389,6 +1396,7 @@ def _replace_task_for_type_change(db: Session, old_task: Task, task_data: TaskUp
     db.query(TaskNotification).filter(TaskNotification.task_id == old_task.id).delete()
     db.query(TaskTag).filter(TaskTag.task_id == old_task.id).delete()
     delete_task_children(db, old_task.id)
+    delete_pending_prep_tasks(db, old_task.id)
     # This path offers no undo (see docstring) — any ActionLog entries still
     # referencing old_task.id would otherwise let a stale undo toast
     # resurrect it from its snapshot after it's gone, alongside new_task.
@@ -1475,6 +1483,10 @@ async def update_task(task_id: str, task_data: TaskUpdate, response: Response, d
             # with no Projection rows would never show up in the daily or
             # weekly view.
             _build_recurrence_and_projections(db, task.id, task.type, task_data.recurrence)
+
+    # A5: keep the auto prep task in step with the (possibly edited)
+    # deadline/title/importance. No-op for non-deadline types.
+    sync_prep_task(db, task)
 
     log = ActionLog(
         action_type="edit",

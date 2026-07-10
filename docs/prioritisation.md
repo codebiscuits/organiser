@@ -78,6 +78,12 @@ Urgency runs through the same buffer maths as deadlines, with the user's own urg
 ### Other Tasks (plain recurring)
 Manually set at creation time.
 
+## Auto Prep Tasks for Long Deadlines (Theme A component A5)
+
+A deadline task whose creation→deadline span is at least `prep_task_min_span_days` (default 14) gets an auto-generated sibling task — `Prep: {title}`, type deadline, dated at `prep_task_fraction` (default 0.75) of the span, importance inherited, duration 25% of the parent's estimate (min 15) — so a big deadline produces an early start signal instead of sitting at urgency 1 until the buffer maths flips.
+
+The prep task is a real Task row linked via `tasks.generated_from_task_id` (a sibling with a pointer, not a sub-task; the column is generic so tag-recipe auto-tasks can reuse it later). Lifecycle: kept in step with the parent on edits (date/title/importance follow; removed if the deadline moves too close or the prep point is already past); deleted when the parent is completed or deleted (undo of either regenerates it); completing the prep task never touches the parent; prep tasks never chain. See `app/services/prep_tasks.py`.
+
 ## Tie-Breaking (within same priority score)
 
 1. **Recurrence timescale**: Monthly > Weekly > Daily (daily tasks are easiest to defer if missed)

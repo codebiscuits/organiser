@@ -2881,3 +2881,112 @@ class TestWeekViewCarriedForwardVrt:
         ).all()
         assert len(exclusion) == 1
         assert exclusion[0].due_date == past_due
+
+
+# ---------------------------------------------------------------------------
+# Theme A, component A5 — auto-generated prep task at 75% of a deadline's life.
+# ---------------------------------------------------------------------------
+
+class TestPrepTaskGeneration:
+    def _make_deadline(self, client, days_out: int, title: str = "Big report", duration: int = 120) -> dict:
+        deadline_at = (datetime.now() + timedelta(days=days_out)).isoformat()
+        return create_task(client, {
+            "type": "deadline",
+            "title": title,
+            "importance": 3,
+            "deadline_at": deadline_at,
+            "estimated_duration": duration,
+        })
+
+    def _prep_for(self, db, parent_id: str) -> Task | None:
+        return db.query(Task).filter(Task.generated_from_task_id == parent_id).first()
+
+    def test_long_deadline_creates_prep_task(self, client, db):
+        data = self._make_deadline(client, days_out=60)
+        prep = self._prep_for(db, data["id"])
+
+        assert prep is not None
+        assert prep.type == "deadline"
+        assert prep.title == "Prep: Big report"
+        assert prep.status == "pending"
+        assert prep.importance == 3
+        assert prep.estimated_duration == 30  # 25% of 120
+        # 75% of a 60-day span = 45 days from creation
+        assert prep.deadline_at.date() == date.today() + timedelta(days=45)
+
+    def test_short_deadline_gets_no_prep_task(self, client, db):
+        data = self._make_deadline(client, days_out=7)
+        assert self._prep_for(db, data["id"]) is None
+
+    def test_errand_gets_no_prep_task(self, client, db):
+        data = create_task(client, ERRAND_PAYLOAD)
+        assert self._prep_for(db, data["id"]) is None
+
+    def test_prep_task_does_not_chain(self, client, db):
+        data = self._make_deadline(client, days_out=60)
+        prep = self._prep_for(db, data["id"])
+        assert self._prep_for(db, prep.id) is None
+
+    def test_minimum_prep_duration_is_15(self, client, db):
+        data = self._make_deadline(client, days_out=60, duration=20)
+        prep = self._prep_for(db, data["id"])
+        assert prep.estimated_duration == 15
+
+    def test_editing_deadline_moves_prep_task(self, client, db):
+        data = self._make_deadline(client, days_out=60)
+        new_deadline = (datetime.now() + timedelta(days=100)).isoformat()
+
+        resp = client.put(f"/tasks/{data['id']}", json={"deadline_at": new_deadline, "title": "Bigger report"})
+        assert resp.status_code == 200, resp.text
+
+        prep = self._prep_for(db, data["id"])
+        db.refresh(prep)
+        assert prep.deadline_at.date() == date.today() + timedelta(days=75)
+        assert prep.title == "Prep: Bigger report"
+
+    def test_editing_deadline_close_removes_prep_task(self, client, db):
+        data = self._make_deadline(client, days_out=60)
+        assert self._prep_for(db, data["id"]) is not None
+
+        new_deadline = (datetime.now() + timedelta(days=5)).isoformat()
+        resp = client.put(f"/tasks/{data['id']}", json={"deadline_at": new_deadline})
+        assert resp.status_code == 200, resp.text
+
+        assert self._prep_for(db, data["id"]) is None
+
+    def test_completing_parent_deletes_pending_prep(self, client, db):
+        data = self._make_deadline(client, days_out=60)
+        resp = client.post(f"/tasks/{data['id']}/complete")
+        assert resp.status_code == 200, resp.text
+        assert self._prep_for(db, data["id"]) is None
+
+    def test_completing_prep_leaves_parent_alone(self, client, db):
+        data = self._make_deadline(client, days_out=60)
+        prep = self._prep_for(db, data["id"])
+
+        resp = client.post(f"/tasks/{prep.id}/complete")
+        assert resp.status_code == 200, resp.text
+
+        parent = db.query(Task).filter(Task.id == data["id"]).first()
+        assert parent is not None
+        assert parent.status == "pending"
+        assert self._prep_for(db, data["id"]) is None  # prep row deleted on completion
+
+    def test_deleting_parent_deletes_prep_and_undo_regenerates(self, client, db):
+        data = self._make_deadline(client, days_out=60)
+        assert self._prep_for(db, data["id"]) is not None
+
+        resp = client.delete(f"/tasks/{data['id']}")
+        assert resp.status_code == 200, resp.text
+        assert self._prep_for(db, data["id"]) is None
+
+        import json as json_lib
+        trigger = resp.headers["HX-Trigger"]
+        log_id = json_lib.loads(trigger)["showUndo"]["ids"][0]
+        undo_resp = client.post(f"/undo/{log_id}")
+        assert undo_resp.status_code == 200, undo_resp.text
+
+        assert db.query(Task).filter(Task.id == data["id"]).first() is not None
+        prep = self._prep_for(db, data["id"])
+        assert prep is not None
+        assert prep.status == "pending"

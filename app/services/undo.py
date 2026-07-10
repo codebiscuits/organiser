@@ -27,6 +27,7 @@ def task_to_dict(task) -> dict:
         "manual_scheduled_time": task.manual_scheduled_time.isoformat() if task.manual_scheduled_time else None,
         "preset_id": task.preset_id,
         "allowed_days": task.allowed_days,
+        "generated_from_task_id": task.generated_from_task_id,
     }
 
 
@@ -73,6 +74,8 @@ def task_from_dict(snap: dict) -> Task:
         manual_scheduled_time=datetime.fromisoformat(snap["manual_scheduled_time"]) if snap["manual_scheduled_time"] else None,
         preset_id=snap["preset_id"],
         allowed_days=snap["allowed_days"],
+        # .get(): snapshots logged before the generated_from_task_id column
+        generated_from_task_id=snap.get("generated_from_task_id"),
     )
 
 
@@ -96,3 +99,4 @@ def apply_task_dict(task, snap: dict):
     task.manual_scheduled_time = datetime.fromisoformat(snap["manual_scheduled_time"]) if snap["manual_scheduled_time"] else None
     task.preset_id = snap["preset_id"]
     task.allowed_days = snap["allowed_days"]
+    task.generated_from_task_id = snap.get("generated_from_task_id")

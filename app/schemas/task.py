@@ -118,6 +118,7 @@ class TaskResponse(BaseModel):
     deferred_count: int
     preset_id: int | None = None
     allowed_days: str | None = None
+    generated_from_task_id: str | None = None
     notification_offsets: list[int] = []
     created_at: datetime
     updated_at: datetime

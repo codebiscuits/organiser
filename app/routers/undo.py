@@ -11,6 +11,7 @@ from app.models.task import Task, CompletedTask
 from app.models.recurrence import Recurrence, Projection, ProjectionExclusion
 from app.models.workout import PerformedSet
 from app.services.undo import task_from_dict, apply_task_dict
+from app.services.prep_tasks import sync_prep_task
 
 router = APIRouter()
 
@@ -100,6 +101,10 @@ def _undo_complete(log, db):
     for due_date_str in json.loads(log.projections_snapshot or "[]"):
         db.add(Projection(task_id=log.task_id, due_date=date.fromisoformat(due_date_str)))
 
+    # A5: completing the parent removed its pending auto prep task; the
+    # parent is back, so re-derive the prep task from its current deadline.
+    sync_prep_task(db, task)
+
 
 def _undo_defer(log, db):
     task = db.query(Task).filter(Task.id == log.task_id).first()
@@ -143,9 +148,14 @@ def _undo_delete_instance(log, db):
 
 def _undo_delete(log, db):
     snap = json.loads(log.task_snapshot)
-    if not db.query(Task).filter(Task.id == log.task_id).first():
-        db.add(task_from_dict(snap))
+    restored = db.query(Task).filter(Task.id == log.task_id).first()
+    if not restored:
+        restored = task_from_dict(snap)
+        db.add(restored)
         db.flush()
+        # A5: deleting the parent removed its pending auto prep task too —
+        # re-derive it now the parent exists again.
+        sync_prep_task(db, restored)
 
     if log.recurrence_snapshot:
         if not db.query(Recurrence).filter(Recurrence.task_id == log.task_id).first():

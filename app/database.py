@@ -43,6 +43,7 @@ def run_migrations(eng):
                ),
                deadline_auto = 1
            WHERE type = 'errand' AND deadline_at IS NULL""",
+        "ALTER TABLE tasks ADD COLUMN generated_from_task_id VARCHAR",
     ]
     with eng.connect() as conn:
         for sql in migrations:
