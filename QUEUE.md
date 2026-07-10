@@ -90,12 +90,6 @@ Countdown timer off to the side of the UI, independent of tasks. Set by drag/swi
 **Description:**
 Small stable API on the organiser (create task, complete task, query today's list, webhook out) to support tightly-integrated companion apps. First consumer: standalone workout interval timer app — set count + total time auto-divided, nested repetitions for true supersets. Later consumers: meal planning, AI delegation via Hermes kanban. (Adaptive-intensity-via-pulse-feedback idea: parked indefinitely, moonshot.)
 
-### Theme A: scheduling/priority overhaul
-**Status:** idea — needs dedicated design session
-**Added:** 2026-07-07
-
-**Description:**
-See Roadmap item 2 for the full component list. Do not implement piecemeal.
 
 ### Post-A: ordering constraints, future-tasks sidebar, sub-tasks
 **Status:** idea — blocked on Theme A
@@ -128,7 +122,21 @@ Recipes with ingredient/prep/cook metadata → weekly meal pick → generated sh
 
 ## In Progress
 
-(nothing in progress)
+### Theme A: scheduling/priority overhaul
+**Status:** in-progress (design agreed 2026-07-10; implementing on branch `theme-a` off `week-view-today`)
+**Added:** 2026-07-07
+
+**Description:**
+Full agreed design in `docs/design-theme-a.md`: unified effective-urgency pipeline (deadline buffer maths / VRT overdue escalation / errand auto-deadline + backlog boost) feeding banded, displacement-based scheduling with a "didn't fit today" overflow section. All 5 design decisions resolved with Ross 2026-07-10 (§5 of the doc). Implementation staged per §4: urgency refactor → A2 → A4 → A3 → A1 → A5.
+
+**Acceptance criteria:**
+- [ ] Effective-urgency refactor: per-type urgency extraction, behaviour unchanged, suite green
+- [ ] A2: overdue VRTs carry forward (`due_date <= target`) with cadence-relative urgency escalation; plain recurring unaffected
+- [ ] A4: errands get 1-year auto-deadline (`deadline_auto` column + migration), buffer-based urgency, 6-month prompt banner with date-picker / "+6 months"; auto-deadline expiry re-prompts (never swept)
+- [ ] A3: errand backlog boost (oldest-first, soft/hard thresholds, max-not-stack with A4)
+- [ ] A1: banded displacement scheduling; manual placements never evicted; unplaced 9s/6s in a visible "didn't fit today" section; due-today pinning untouched
+- [ ] A5: single auto prep task at 75% of deadline life (span ≥ 14 days) via `generated_from_task_id`; recomputed on deadline edit; deleted with parent
+- [ ] New settings knobs per §4; migrations via existing `app/database.py` pattern; regression tests per stage
 
 ---
 
