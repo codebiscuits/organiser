@@ -447,9 +447,9 @@ async def get_today_tasks(db: Session = Depends(get_db)):
     """Get today's prioritised and scheduled task list as JSON."""
     _auto_complete_trigger(db)
     scheduled, capacity = get_prioritised_tasks_with_metadata(db, date.today())
-    tasks = []
-    for pt in scheduled:
-        tasks.append({
+
+    def pt_to_json(pt):
+        return {
             "id": pt.task.id,
             "type": pt.task.type,
             "title": pt.task.title,
@@ -467,8 +467,14 @@ async def get_today_tasks(db: Session = Depends(get_db)):
             "scheduled_at": pt.task.scheduled_at.isoformat() if pt.task.scheduled_at else None,
             "location": pt.task.location,
             "allow_afternoon": pt.task.allow_afternoon,
-        })
-    return {"tasks": tasks, "capacity": capacity}
+        }
+
+    tasks = [pt_to_json(pt) for pt in scheduled]
+    # capacity["overflow"] holds live PrioritisedTask objects (for templates);
+    # serialise them for JSON consumers.
+    capacity_json = {k: v for k, v in capacity.items() if k != "overflow"}
+    capacity_json["overflow"] = [pt_to_json(pt) for pt in capacity["overflow"]]
+    return {"tasks": tasks, "capacity": capacity_json}
 
 
 @router.get("/timeline", response_class=HTMLResponse)
@@ -556,6 +562,16 @@ async def week_view(
         for projection, task in projections:
             if inject_today and projection.due_date == today:
                 continue
+            if (
+                inject_today
+                and task.type == "variable_recurring"
+                and projection.due_date < today
+                and task.status == "pending"
+            ):
+                # Carried-forward overdue VRT (Theme A A2): it's represented
+                # in today's live-list splice below, so listing it on its
+                # original past day too would show it twice in the range.
+                continue
             scheduled_time = task.scheduled_time or time(9, 0)
             scheduled_at = datetime.combine(projection.due_date, scheduled_time)
             result.append({
@@ -632,6 +648,21 @@ async def delete_projection(
         Projection.task_id == task_id,
         Projection.due_date == projection_date
     ).delete()
+
+    if deleted == 0 and task and task.type == "variable_recurring":
+        # A carried-forward VRT (Theme A A2) is shown on today's column but
+        # its real projection is past-dated — the week view sends today's
+        # date, so the exact match above finds nothing. Fall back to the
+        # earliest projection at or before the requested date (mirrors
+        # delete_task_instance) and key the tombstone/undo off its real date.
+        target = db.query(Projection).filter(
+            Projection.task_id == task_id,
+            Projection.due_date <= projection_date,
+        ).order_by(Projection.due_date.asc()).first()
+        if target:
+            projection_date = target.due_date
+            db.delete(target)
+            deleted = 1
 
     if deleted == 0:
         raise HTTPException(status_code=404, detail="Projection not found")

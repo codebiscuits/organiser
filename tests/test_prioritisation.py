@@ -318,7 +318,7 @@ class TestScheduleTasksIntoTimeline:
         fixed = [self._make_fixed_pt(11)]
         flexible = []
         
-        scheduled = schedule_tasks_into_timeline(fixed, flexible, FUTURE_DATE)
+        scheduled, _ = schedule_tasks_into_timeline(fixed, flexible, FUTURE_DATE)
         
         assert len(scheduled) == 1
         assert scheduled[0].scheduled_time == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 11, 0)
@@ -327,7 +327,7 @@ class TestScheduleTasksIntoTimeline:
         fixed = [self._make_fixed_pt(11)]
         flexible = [self._make_flexible_pt(60)]
         
-        scheduled = schedule_tasks_into_timeline(fixed, flexible, FUTURE_DATE)
+        scheduled, _ = schedule_tasks_into_timeline(fixed, flexible, FUTURE_DATE)
         
         assert len(scheduled) == 2
         assert scheduled[0].scheduled_time == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 9, 0)
@@ -340,7 +340,7 @@ class TestScheduleTasksIntoTimeline:
             self._make_flexible_pt(60, score=3, title="Low"),
         ]
         
-        scheduled = schedule_tasks_into_timeline(fixed, flexible, FUTURE_DATE)
+        scheduled, _ = schedule_tasks_into_timeline(fixed, flexible, FUTURE_DATE)
         
         assert scheduled[0].task.title == "High"
         assert scheduled[0].scheduled_time == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 9, 0)
@@ -354,7 +354,7 @@ class TestScheduleTasksIntoTimeline:
         ]
         flexible = [self._make_flexible_pt(90)]
         
-        scheduled = schedule_tasks_into_timeline(fixed, flexible, FUTURE_DATE)
+        scheduled, _ = schedule_tasks_into_timeline(fixed, flexible, FUTURE_DATE)
         
         assert len(scheduled) == 2
 
@@ -746,7 +746,7 @@ class TestManualScheduledTimeOverride:
 
     def test_task_with_manual_time_scheduled_at_that_time(self):
         manual = self._make_flexible_with_manual_time(13)
-        scheduled = schedule_tasks_into_timeline([], [manual], FUTURE_DATE)
+        scheduled, _ = schedule_tasks_into_timeline([], [manual], FUTURE_DATE)
 
         manual_result = next(pt for pt in scheduled if pt.task is manual.task)
         assert manual_result.scheduled_time == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 13, 0)
@@ -756,7 +756,7 @@ class TestManualScheduledTimeOverride:
         manual = self._make_flexible_with_manual_time(9)
         auto = self._make_flexible_no_manual(60, score=9)
 
-        scheduled = schedule_tasks_into_timeline([], [manual, auto], FUTURE_DATE)
+        scheduled, _ = schedule_tasks_into_timeline([], [manual, auto], FUTURE_DATE)
 
         auto_result = next(pt for pt in scheduled if pt.task is auto.task)
         assert auto_result.scheduled_time is not None
@@ -879,7 +879,7 @@ class TestScheduleFullDay:
             self._make_fixed_pt(15, 180),
         ]
         flex = self._make_flexible_pt(60)
-        scheduled = schedule_tasks_into_timeline(fixed, [flex], FUTURE_DATE)
+        scheduled, _ = schedule_tasks_into_timeline(fixed, [flex], FUTURE_DATE)
 
         assert len(scheduled) == 4
         assert not any(pt.task is flex.task for pt in scheduled)
@@ -921,7 +921,7 @@ class TestMultipleManualScheduled:
         manual_b = self._make_manual(13, score=8)
         auto_c = self._make_auto(60, score=3)
 
-        scheduled = schedule_tasks_into_timeline([], [manual_a, manual_b, auto_c], FUTURE_DATE)
+        scheduled, _ = schedule_tasks_into_timeline([], [manual_a, manual_b, auto_c], FUTURE_DATE)
 
         assert len(scheduled) == 3
 
@@ -944,7 +944,7 @@ class TestMultipleManualScheduled:
         )
         manual = self._make_manual(10, minute=30, score=6)
 
-        scheduled = schedule_tasks_into_timeline([fixed], [manual], FUTURE_DATE)
+        scheduled, _ = schedule_tasks_into_timeline([fixed], [manual], FUTURE_DATE)
 
         assert len(scheduled) == 2
         fixed_result = next(pt for pt in scheduled if pt.is_fixed)
@@ -983,7 +983,7 @@ class TestTaskExactlyFillingGap:
             is_fixed=False,
         )
 
-        scheduled = schedule_tasks_into_timeline(fixed, [flex], FUTURE_DATE)
+        scheduled, _ = schedule_tasks_into_timeline(fixed, [flex], FUTURE_DATE)
 
         assert len(scheduled) == 3
         flex_result = next(pt for pt in scheduled if not pt.is_fixed)
@@ -1027,7 +1027,7 @@ class TestMultipleGapsSomeTooSmall:
             is_fixed=False,
         )
 
-        scheduled = schedule_tasks_into_timeline(fixed, [flex], FUTURE_DATE)
+        scheduled, _ = schedule_tasks_into_timeline(fixed, [flex], FUTURE_DATE)
 
         flex_result = next(pt for pt in scheduled if not pt.is_fixed)
         assert flex_result.scheduled_time == datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, 11, 0)
@@ -1063,7 +1063,7 @@ class TestPrepDurationInFlexibleScheduling:
             is_fixed=False,
         )
 
-        scheduled = schedule_tasks_into_timeline([], [flex_a, flex_b], FUTURE_DATE)
+        scheduled, _ = schedule_tasks_into_timeline([], [flex_a, flex_b], FUTURE_DATE)
 
         a_result = next(pt for pt in scheduled if pt.task is task_a)
         b_result = next(pt for pt in scheduled if pt.task is task_b)
@@ -1103,7 +1103,7 @@ class TestAllowAfternoonInteraction:
     def test_afternoon_only_gaps_task_not_allowed(self):
         fixed = [self._make_fixed_covering_main_window()]
         flex = self._make_flex(allow_afternoon=False)
-        scheduled = schedule_tasks_into_timeline(fixed, [flex], FUTURE_DATE)
+        scheduled, _ = schedule_tasks_into_timeline(fixed, [flex], FUTURE_DATE)
 
         # Only the fixed task; flex not scheduled (no main-window gap)
         assert len(scheduled) == 1
@@ -1112,7 +1112,7 @@ class TestAllowAfternoonInteraction:
     def test_afternoon_only_gaps_task_allowed(self):
         fixed = [self._make_fixed_covering_main_window()]
         flex = self._make_flex(allow_afternoon=True)
-        scheduled = schedule_tasks_into_timeline(fixed, [flex], FUTURE_DATE)
+        scheduled, _ = schedule_tasks_into_timeline(fixed, [flex], FUTURE_DATE)
 
         assert len(scheduled) == 2
         flex_result = next(pt for pt in scheduled if pt.task is flex.task)
@@ -1857,3 +1857,148 @@ class TestBacklogBoostInFlexibleListDB:
         assert oldest.priority_score == 2       # importance 1 x urgency 2
         assert newest.calculated_urgency == 1   # unboosted
         assert newest.priority_score == 1
+
+
+class TestBandedDisplacement:
+    """
+    Theme A component A1: banded scheduling with displacement and the
+    "didn't fit today" overflow channel.
+
+    All tests call schedule_tasks_into_timeline directly with synthetic
+    inputs for FUTURE_DATE, so gap capacity never depends on the real clock.
+    Displacement is exercised by passing tasks in non-descending order —
+    today's production callers always pass a priority-sorted list (so a
+    higher band never finds a lower one already placed), but the mechanism
+    must hold for future flows (e.g. ordering constraints) that skip tasks.
+    """
+
+    def _make_fixed(self, start_hour: int, duration: int) -> PrioritisedTask:
+        task = MagicMock(spec=Task)
+        task.estimated_duration = duration
+        task.prep_duration = 0
+        task.manual_scheduled_time = None
+        task.deferred_count = 0
+        return PrioritisedTask(
+            task=task,
+            priority_score=9,
+            calculated_urgency=3,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=True,
+            scheduled_time=datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, start_hour, 0),
+        )
+
+    def _make_auto(
+        self, score: int, duration: int = 120, allow_afternoon: bool = False, title: str = "Auto"
+    ) -> PrioritisedTask:
+        task = MagicMock(spec=Task)
+        task.title = title
+        task.estimated_duration = duration
+        task.prep_duration = 0
+        task.allow_afternoon = allow_afternoon
+        task.manual_scheduled_time = None
+        task.deferred_count = 0
+        return PrioritisedTask(
+            task=task,
+            priority_score=score,
+            calculated_urgency=2,
+            recurrence_timescale=RecurrenceTimescale.NONE,
+            is_fixed=False,
+        )
+
+    def _make_manual(self, score: int, hour: int, duration: int = 120) -> PrioritisedTask:
+        pt = self._make_auto(score, duration)
+        pt.task.manual_scheduled_time = datetime(
+            FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, hour, 0
+        )
+        return pt
+
+    def _at(self, hour: int) -> datetime:
+        return datetime(FUTURE_DATE.year, FUTURE_DATE.month, FUTURE_DATE.day, hour, 0)
+
+    def test_high_score_displaces_lower_and_evictee_refits(self):
+        # Fixed 9:00-13:00 leaves one main-window gap 13:00-15:00 plus the
+        # afternoon. The low task (afternoon-capable) grabs 13:00 first;
+        # the incoming 9 (main-only) must evict it and the evictee re-fits
+        # into the afternoon.
+        fixed = [self._make_fixed(9, 240)]
+        low = self._make_auto(3, 120, allow_afternoon=True, title="Low")
+        high = self._make_auto(9, 120, allow_afternoon=False, title="High")
+
+        scheduled, overflow = schedule_tasks_into_timeline(fixed, [low, high], FUTURE_DATE)
+
+        assert overflow == []
+        high_result = next(pt for pt in scheduled if pt.task is high.task)
+        low_result = next(pt for pt in scheduled if pt.task is low.task)
+        assert high_result.scheduled_time == self._at(13)
+        assert low_result.scheduled_time == self._at(15)
+
+    def test_unrefittable_evictee_lands_in_overflow(self):
+        # Same shape, but the evictee can't use the afternoon: after the 9
+        # takes its slot there is nowhere left for it, so it overflows
+        # rather than disappearing.
+        fixed = [self._make_fixed(9, 240)]
+        low = self._make_auto(3, 120, allow_afternoon=False, title="Low")
+        high = self._make_auto(9, 120, allow_afternoon=False, title="High")
+
+        scheduled, overflow = schedule_tasks_into_timeline(fixed, [low, high], FUTURE_DATE)
+
+        high_result = next(pt for pt in scheduled if pt.task is high.task)
+        assert high_result.scheduled_time == self._at(13)
+        assert [pt.task for pt in overflow] == [low.task]
+        assert all(pt.task is not low.task for pt in scheduled)
+
+    def test_manual_placement_never_evicted(self):
+        # Manual drag-and-drop placements are sacred (design decision 5):
+        # even a 9 that fits nowhere may not displace them.
+        fixed = [self._make_fixed(9, 240)]
+        manual_low = self._make_manual(1, 13, 120)
+        high = self._make_auto(9, 120, allow_afternoon=False, title="High")
+
+        scheduled, overflow = schedule_tasks_into_timeline(fixed, [manual_low, high], FUTURE_DATE)
+
+        manual_result = next(pt for pt in scheduled if pt.task is manual_low.task)
+        assert manual_result.scheduled_time == self._at(13)
+        assert [pt.task for pt in overflow] == [high.task]
+
+    def test_fixed_tasks_never_evicted(self):
+        # Day fully covered by a fixed block: nothing to evict, the 9
+        # overflows and the fixed task is untouched.
+        fixed = [self._make_fixed(9, 360)]
+        high = self._make_auto(9, 60, allow_afternoon=False, title="High")
+
+        scheduled, overflow = schedule_tasks_into_timeline(fixed, [high], FUTURE_DATE)
+
+        assert [pt.task for pt in overflow] == [high.task]
+        fixed_result = next(pt for pt in scheduled if pt.is_fixed)
+        assert fixed_result.scheduled_time == self._at(9)
+
+    def test_eviction_respects_allow_afternoon_of_incoming(self):
+        # Evicting the afternoon occupant would free 15:00-17:00, but the
+        # incoming 9 can't be placed in the afternoon anyway — so no
+        # eviction happens and the occupant keeps its slot.
+        fixed = [self._make_fixed(9, 360)]  # main window fully blocked
+        low = self._make_auto(1, 120, allow_afternoon=True, title="Low")
+        high = self._make_auto(9, 60, allow_afternoon=False, title="High")
+
+        scheduled, overflow = schedule_tasks_into_timeline(fixed, [low, high], FUTURE_DATE)
+
+        low_result = next(pt for pt in scheduled if pt.task is low.task)
+        assert low_result.scheduled_time == self._at(15)
+        assert [pt.task for pt in overflow] == [high.task]
+
+    def test_overflow_sorted_by_priority(self):
+        # Nothing fits at all: every task overflows, listed by score desc.
+        fixed = [self._make_fixed(9, 360)]
+        t3 = self._make_auto(3, 60, title="Three")
+        t9 = self._make_auto(9, 60, title="Nine")
+        t6 = self._make_auto(6, 60, title="Six")
+
+        scheduled, overflow = schedule_tasks_into_timeline(fixed, [t3, t9, t6], FUTURE_DATE)
+
+        assert [pt.task for pt in overflow] == [t9.task, t6.task, t3.task]
+        assert len(scheduled) == 1  # just the fixed block
+
+    def test_metadata_capacity_exposes_overflow(self, db):
+        scheduled, capacity = get_prioritised_tasks_with_metadata(db, date.today())
+        assert isinstance(capacity["overflow"], list)
+        assert capacity["overflow_count"] == len(capacity["overflow"])

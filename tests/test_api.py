@@ -2777,3 +2777,107 @@ class TestErrandPromptSelection:
         resp = client.get("/tasks/errand-prompts")
         assert resp.status_code == 200
         assert "errand-prompt-banner" not in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Theme A, component A1 — overflow surfaces + week-view A2 interactions.
+# ---------------------------------------------------------------------------
+
+class TestOverflowSurfaces:
+    def test_today_json_serialises_overflow(self, client, db):
+        """capacity['overflow'] holds live PrioritisedTask objects for the
+        templates; /tasks/today must serialise them (a raw return would 500)."""
+        create_task(client, ERRAND_PAYLOAD)
+        resp = client.get("/tasks/today")
+        assert resp.status_code == 200
+        capacity = resp.json()["capacity"]
+        assert isinstance(capacity["overflow"], list)
+        assert capacity["overflow_count"] == len(capacity["overflow"])
+        for entry in capacity["overflow"]:
+            assert isinstance(entry, dict)
+            assert "id" in entry and "priority_score" in entry
+
+    def test_task_list_html_includes_overflow_section_only_when_needed(self, client, db):
+        """With an empty DB there's no overflow, so the shelf must not render."""
+        resp = client.get("/tasks/")
+        assert resp.status_code == 200
+        assert "Didn't fit today" not in resp.text
+
+
+class TestWeekViewCarriedForwardVrt:
+    def _make_overdue_vrt(self, client, db, days_overdue: int):
+        payload = {
+            "type": "variable_recurring",
+            "title": "Week Overdue VRT",
+            "importance": 2,
+            "urgency": 2,
+            "estimated_duration": 30,
+            "recurrence": {
+                "interval_type": "monthly",
+                "interval_multiple": 1,
+                "start_date": "2026-01-01T00:00:00",
+            },
+        }
+        data = create_task(client, payload)
+        task_id = data["id"]
+        db.query(Projection).filter(Projection.task_id == task_id).delete()
+        past_due = date.today() - timedelta(days=days_overdue)
+        db.add(Projection(task_id=task_id, due_date=past_due))
+        db.commit()
+        return task_id, past_due
+
+    def test_carried_vrt_not_listed_on_past_day_when_today_in_range(self, client, db):
+        """A carried-forward VRT is represented via today's live-list splice;
+        its original past day must not also list it (double-listing).
+
+        Time-hazard note: we assert absence on the past day, NOT presence in
+        today's column — whether it survives gap scheduling depends on the
+        time of day the suite runs."""
+        task_id, past_due = self._make_overdue_vrt(client, db, days_overdue=2)
+
+        start = past_due.isoformat()
+        end = date.today().isoformat()
+        resp = client.get(f"/tasks/week?start={start}&end={end}")
+        assert resp.status_code == 200
+
+        past_day_entries = [
+            e for e in resp.json()
+            if e["id"] == task_id and e.get("projection_date") == past_due.isoformat()
+        ]
+        assert past_day_entries == []
+
+    def test_carried_vrt_still_listed_on_past_day_when_today_not_in_range(self, client, db):
+        """Viewing a purely historical range: no live-list splice happens, so
+        the projection row is the only representation and must stay."""
+        task_id, past_due = self._make_overdue_vrt(client, db, days_overdue=3)
+
+        start = (past_due - timedelta(days=1)).isoformat()
+        end = (date.today() - timedelta(days=1)).isoformat()
+        resp = client.get(f"/tasks/week?start={start}&end={end}")
+        assert resp.status_code == 200
+
+        entries = [e for e in resp.json() if e["id"] == task_id]
+        assert len(entries) == 1
+        assert entries[0]["projection_date"] == past_due.isoformat()
+
+    def test_week_projection_delete_falls_back_for_carried_vrt(self, client, db):
+        """The week view sends today's date for a carried-forward VRT (its
+        splice entry says projection_date == today), but the real projection
+        is past-dated: the delete must find it, and the exclusion tombstone
+        must key off the REAL due date."""
+        from app.models.recurrence import ProjectionExclusion
+
+        task_id, past_due = self._make_overdue_vrt(client, db, days_overdue=5)
+
+        resp = client.delete(
+            f"/tasks/week/projection/{task_id}",
+            params={"date": date.today().isoformat()},
+        )
+        assert resp.status_code == 200, resp.text
+
+        assert db.query(Projection).filter(Projection.task_id == task_id).count() == 0
+        exclusion = db.query(ProjectionExclusion).filter(
+            ProjectionExclusion.task_id == task_id
+        ).all()
+        assert len(exclusion) == 1
+        assert exclusion[0].due_date == past_due

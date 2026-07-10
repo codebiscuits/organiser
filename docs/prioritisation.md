@@ -144,18 +144,21 @@ Before auto-scheduling, check for tasks with `manual_scheduled_time` set for the
 2. Block their time slots from the available gaps
 3. This allows users to override automatic prioritisation
 
-### Step 6: Fit Remaining Tasks into Gaps
+### Step 6: Banded Fitting with Displacement (Theme A component A1)
 
-For each flexible task without a manual time (in priority order):
+For each flexible task without a manual time (in descending priority-score order — bands 9, 6, 4, 3, 2, 1):
 
 1. **Find a fitting gap**: First gap where `gap.duration >= task.duration`
    - Respect `allow_afternoon` flag (if false, skip gaps starting after 3pm)
 2. **Place the task**: Assign `scheduled_time = gap.start`
-3. **Recalculate the gap**: 
+3. **Recalculate the gap**:
    - `new_gap.start = gap.start + task.duration`
    - If gap is now empty, remove it
+4. **Displacement** (when nothing fits): try to free room by evicting already-placed **auto-scheduled** tasks with **strictly lower** priority score — never fixed tasks, never manual drag-and-drop placements, never due-today pins. An evicted slot is merged with adjacent free gap space when testing whether the incoming task then fits (lowest score evicted first, single evictions tried before greedy accumulation). Evictees are re-fitted into the remaining space afterwards; any that no longer fit go to overflow.
+   - Note: because tasks are processed in descending score order, displacement can't trigger in today's pipeline (nothing lower-scored is ever placed before a higher one asks). It exists as a correctness guarantee for flows that place tasks out of band order — manual placements are the current one (but they're sacred), and post-Theme-A ordering constraints will be the next.
+5. **Overflow — the "didn't fit today" shelf**: any auto-scheduled task that ends up unplaced (no fit, no workable displacement, or evicted and unre-fittable) is **not dropped**. It's returned separately (sorted by priority, highest first) and rendered as a muted section at the bottom of the daily list, so a high-scoring task is never silently invisible. Overflow tasks keep their normal actions (complete/defer/edit/delete), are excluded from the week view's today column (placed-tasks-only), and never become the "current task" card.
 
-Continue until no more tasks fit or all tasks are scheduled.
+`schedule_tasks_into_timeline` returns `(placed, overflow)`; `get_prioritised_tasks_with_metadata`'s capacity dict carries `overflow` / `overflow_count` (`/tasks/today` serialises them for JSON consumers).
 
 ## Scheduling Windows
 

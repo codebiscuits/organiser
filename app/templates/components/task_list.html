@@ -49,3 +49,47 @@
 {% else %}
     <p class="no-upcoming">Nothing else scheduled</p>
 {% endif %}
+{% if capacity and capacity.overflow %}
+<section class="overflow-section">
+    <h3 class="overflow-heading">Didn't fit today</h3>
+    <p class="overflow-explainer">No room left in today's schedule — these are still waiting, highest priority first.</p>
+    {% for pt in capacity.overflow %}
+    <article class="task-card-mini task-card-mini--overflow"
+             data-task-id="{{ pt.task.id }}"
+             {% if pt.task.tags %}style="border-left: 3px solid {{ pt.task.tags[0].color }}"{% endif %}>
+        <div class="mini-content">
+            <div class="mini-header">
+                <span class="mini-title">
+                    {% if pt.task.type == 'workout' and pt.selected_exercise %}
+                        Workout: {{ pt.selected_exercise }}
+                    {% else %}
+                        {{ pt.task.title }}
+                    {% endif %}
+                </span>
+                <span class="mini-duration">{{ pt.task.estimated_duration }}m</span>
+                {% if pt.task.tags %}
+                <span class="mini-tag-icons">
+                    {% for tag in pt.task.tags %}
+                    <i data-lucide="{{ tag.icon }}" style="width:12px;height:12px;color:{{ tag.color }}"></i>
+                    {% endfor %}
+                </span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="mini-actions">
+            {{ done_button(pt.task, 'btn-mini btn-done', '✓') }}
+            {{ defer_button(pt.task, 'btn-mini btn-defer', '⏱') }}
+            <button
+                class="btn-mini btn-edit"
+                hx-get="/tasks/{{ pt.task.id }}/edit"
+                hx-trigger="click"
+                hx-target="body"
+                hx-swap="beforeend"
+                title="Edit"
+            >✎</button>
+            {{ delete_button(pt.task, 'btn-mini btn-delete', '✕', '/tasks/' ~ pt.task.id) }}
+        </div>
+    </article>
+    {% endfor %}
+</section>
+{% endif %}

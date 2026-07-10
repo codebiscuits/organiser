@@ -87,7 +87,7 @@ def build_daily_schedule(db: Session, target_date: date) -> list[ScheduledTask]:
     fixed = get_fixed_tasks(db, target_date)
     flexible = get_flexible_tasks(db, target_date)
     
-    scheduled_prioritised = schedule_tasks_into_timeline(fixed, flexible, target_date)
+    scheduled_prioritised, _overflow = schedule_tasks_into_timeline(fixed, flexible, target_date)
     
     scheduled: list[ScheduledTask] = []
     for pt in scheduled_prioritised:

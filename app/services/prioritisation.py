@@ -548,43 +548,172 @@ def split_gap(gap: TimeSlot, task: Task) -> list[TimeSlot]:
     return []
 
 
+def _merge_slots(slots: list[TimeSlot]) -> list[TimeSlot]:
+    """
+    Coalesce a list of free time slots: sorted by start, with touching or
+    overlapping slots merged into one. Returns fresh TimeSlot objects (the
+    inputs are never mutated). Used by displacement to answer "if this
+    occupied slot were freed, how big would the combined hole be?" — an
+    eviction adjacent to an existing gap frees one larger slot.
+    """
+    ordered = sorted(slots, key=lambda s: s.start)
+    merged: list[TimeSlot] = []
+    for s in ordered:
+        if merged and s.start <= merged[-1].end:
+            if s.end > merged[-1].end:
+                merged[-1] = TimeSlot(start=merged[-1].start, end=s.end)
+        else:
+            merged.append(TimeSlot(start=s.start, end=s.end))
+    return merged
+
+
+def _occupied_slot(pt: PrioritisedTask) -> TimeSlot:
+    return TimeSlot(start=pt.scheduled_time, end=calculate_end_time(pt.task, pt.scheduled_time))
+
+
+def _place_in_gaps(
+    pt: PrioritisedTask,
+    gaps: list[TimeSlot],
+    target_date: date,
+    scheduled: list[PrioritisedTask],
+    auto_placed: list[PrioritisedTask],
+) -> tuple[bool, list[TimeSlot]]:
+    """First-fit `pt` into `gaps`; on success, record it and split the gap."""
+    gap, gap_idx = find_fitting_gap(pt.task, gaps, target_date)
+    if gap is None:
+        return False, gaps
+    pt.scheduled_time = gap.start
+    scheduled.append(pt)
+    auto_placed.append(pt)
+    return True, gaps[:gap_idx] + split_gap(gap, pt.task) + gaps[gap_idx + 1:]
+
+
+def _try_displacement(
+    incoming: PrioritisedTask,
+    auto_placed: list[PrioritisedTask],
+    scheduled: list[PrioritisedTask],
+    gaps: list[TimeSlot],
+    overflow: list[PrioritisedTask],
+    target_date: date,
+) -> tuple[bool, list[TimeSlot]]:
+    """
+    Theme A component A1 — displacement. `incoming` fits no remaining gap;
+    try to free room by evicting already-placed AUTO tasks with strictly
+    lower priority_score. Never touches fixed tasks, manual drag-and-drop
+    placements (they're not in auto_placed), or due-today pins.
+
+    Strategy (simple and correct over optimal, per the design):
+    1. Candidates: strictly lower score, sorted lowest score first, then
+       shortest duration (cheapest eviction) — ids as a final deterministic
+       tie-break aren't needed since list order is stable.
+    2. Pass 1: try each candidate ALONE — merge its occupied slot with the
+       adjacent free gaps and test whether incoming then fits.
+    3. Pass 2: greedily accumulate candidates in the same order, testing
+       after each addition; stop at the first workable set.
+    4. Commit: evict the set, place incoming, then re-fit each evictee (in
+       priority order) into what remains; evictees that no longer fit go to
+       overflow. If no set works, nothing is evicted.
+
+    Returns (placed?, updated_gaps). Mutates scheduled/auto_placed/overflow
+    in place on success.
+    """
+    candidates = [
+        c for c in auto_placed
+        if c.priority_score < incoming.priority_score and not c.due_today
+    ]
+    if not candidates:
+        return False, gaps
+
+    def duration_of(c: PrioritisedTask) -> int:
+        return (c.task.estimated_duration or 30) + (c.task.prep_duration or 0)
+
+    candidates.sort(key=lambda c: (c.priority_score, duration_of(c)))
+
+    def fits_after_evicting(evictees: list[PrioritisedTask]) -> bool:
+        merged = _merge_slots(gaps + [_occupied_slot(e) for e in evictees])
+        return find_fitting_gap(incoming.task, merged, target_date)[0] is not None
+
+    eviction_set: list[PrioritisedTask] | None = None
+    for c in candidates:
+        if fits_after_evicting([c]):
+            eviction_set = [c]
+            break
+    if eviction_set is None:
+        accumulated: list[PrioritisedTask] = []
+        for c in candidates:
+            accumulated.append(c)
+            if fits_after_evicting(accumulated):
+                eviction_set = list(accumulated)
+                break
+    if eviction_set is None:
+        return False, gaps
+
+    # Commit the eviction: pull the set off the timeline and reclaim its time.
+    for e in eviction_set:
+        scheduled[:] = [s for s in scheduled if s is not e]
+        auto_placed[:] = [s for s in auto_placed if s is not e]
+    gaps = _merge_slots(gaps + [_occupied_slot(e) for e in eviction_set])
+    for e in eviction_set:
+        e.scheduled_time = None
+
+    placed, gaps = _place_in_gaps(incoming, gaps, target_date, scheduled, auto_placed)
+    assert placed  # guaranteed: fits_after_evicting used the same computation
+
+    # Re-fit evictees into the remaining space, highest priority first.
+    for e in sorted(eviction_set, key=lambda c: c.sort_key(), reverse=True):
+        refit, gaps = _place_in_gaps(e, gaps, target_date, scheduled, auto_placed)
+        if not refit:
+            overflow.append(e)
+
+    return True, gaps
+
+
 def schedule_tasks_into_timeline(
     fixed_tasks: list[PrioritisedTask],
     flexible_tasks: list[PrioritisedTask],
     target_date: date,
-) -> list[PrioritisedTask]:
+) -> tuple[list[PrioritisedTask], list[PrioritisedTask]]:
     """
-    Schedule tasks using the timeline/gaps approach.
-    
+    Schedule tasks using the timeline/gaps approach with banded displacement
+    (Theme A component A1). Returns (placed, overflow).
+
+    Guarantee: no task appears on the day while a strictly higher-scoring
+    task is silently absent — a task that fits nothing may displace placed
+    lower-band tasks, and anything that still doesn't fit is returned in
+    `overflow` (the "didn't fit today" shelf) instead of being dropped.
+
     Algorithm:
     1. Fixed tasks are already sorted by start time
     2. Calculate gaps between fixed tasks
-    3. Check for manually scheduled tasks (from timeline drag-and-drop)
-    4. For each flexible task (in priority order):
-       a. If task has a manual_scheduled_time for today, use that time
-       b. Otherwise find a gap that fits (respecting allow_afternoon)
-       c. Place task at start of gap
-       d. Recalculate the gap
-    5. Return all scheduled tasks in time order
+    3. Manually scheduled tasks (timeline drag-and-drop) keep their exact
+       times and block gaps first — they are sacred and never evicted
+    4. For each remaining flexible task, in descending priority order
+       (the input is sorted by sort_key, which leads with priority_score):
+       a. First-fit into a gap (respecting allow_afternoon)
+       b. If nothing fits, attempt displacement of strictly-lower-score
+          auto-placed tasks (_try_displacement); displaced tasks are
+          re-fitted afterwards or overflow
+       c. If displacement can't help either, the task goes to overflow
+    5. Placed tasks are returned in time order; overflow in priority order
     """
     gaps = calculate_gaps(fixed_tasks, target_date, include_afternoon=True)
-    
+
     scheduled: list[PrioritisedTask] = list(fixed_tasks)
-    
+
     # Separate manually scheduled from auto-scheduled tasks
     manual_tasks = []
     auto_tasks = []
-    
+
     for pt in flexible_tasks:
         task = pt.task
-        if (task.manual_scheduled_time 
+        if (task.manual_scheduled_time
             and task.manual_scheduled_time.date() == target_date):
             # Use the manual scheduled time
             pt.scheduled_time = task.manual_scheduled_time
             manual_tasks.append(pt)
         else:
             auto_tasks.append(pt)
-    
+
     # Add manually scheduled tasks and update gaps
     for pt in manual_tasks:
         scheduled.append(pt)
@@ -614,22 +743,23 @@ def schedule_tasks_into_timeline(
                 if task_end < gap.end:
                     new_gaps.append(TimeSlot(start=task_end, end=gap.end))
         gaps = new_gaps
-    
-    # Auto-schedule remaining tasks
+
+    # Auto-schedule remaining tasks in priority (band) order, displacing
+    # lower-band placements when out of room.
+    auto_placed: list[PrioritisedTask] = []
+    overflow: list[PrioritisedTask] = []
+
     for pt in auto_tasks:
-        gap, gap_idx = find_fitting_gap(pt.task, gaps, target_date)
-        
-        if gap is None:
+        placed, gaps = _place_in_gaps(pt, gaps, target_date, scheduled, auto_placed)
+        if placed:
             continue
-        
-        pt.scheduled_time = gap.start
-        scheduled.append(pt)
-        
-        remaining_gaps = split_gap(gap, pt.task)
-        gaps = gaps[:gap_idx] + remaining_gaps + gaps[gap_idx + 1:]
-    
+        placed, gaps = _try_displacement(pt, auto_placed, scheduled, gaps, overflow, target_date)
+        if not placed:
+            overflow.append(pt)
+
     scheduled.sort(key=lambda pt: pt.scheduled_time or datetime.max)
-    return scheduled
+    overflow.sort(key=lambda pt: pt.sort_key(), reverse=True)
+    return scheduled, overflow
 
 
 def populate_workout_exercises(db: Session, scheduled: list[PrioritisedTask]) -> None:
@@ -650,12 +780,14 @@ def populate_workout_exercises(db: Session, scheduled: list[PrioritisedTask]) ->
 
 def _schedule_for_date(
     db: Session, target_date: date, available_hours_per_day: int
-) -> tuple[list[PrioritisedTask], list[PrioritisedTask], list[PrioritisedTask]]:
+) -> tuple[list[PrioritisedTask], list[PrioritisedTask], list[PrioritisedTask], list[PrioritisedTask]]:
     """
-    Compute fixed tasks, flexible tasks, and the final scheduled order for target_date.
+    Compute (fixed, flexible, scheduled, overflow) for target_date.
 
     Deadlines due today (due_today=True) are pulled out of the normal gap-based
-    scheduling and pinned to the front of the result, regardless of capacity.
+    scheduling and pinned to the front of the result, regardless of capacity —
+    they can neither overflow nor be displaced. `overflow` holds auto flexible
+    tasks that fit nothing even after displacement (Theme A A1).
     """
     fixed = get_fixed_tasks(db, target_date)
     flexible = get_flexible_tasks(db, target_date, available_hours_per_day)
@@ -663,16 +795,19 @@ def _schedule_for_date(
     due_today = [pt for pt in flexible if pt.due_today]
     other_flexible = [pt for pt in flexible if not pt.due_today]
 
-    scheduled = due_today + schedule_tasks_into_timeline(fixed, other_flexible, target_date)
+    placed, overflow = schedule_tasks_into_timeline(fixed, other_flexible, target_date)
+    scheduled = due_today + placed
     populate_workout_exercises(db, scheduled)
-    return fixed, flexible, scheduled
+    return fixed, flexible, scheduled, overflow
 
 
 def get_prioritised_tasks(db: Session, target_date: date, available_hours_per_day: int = 6) -> list[Task]:
     """
-    Get all tasks for the target date, scheduled into the timeline.
+    Get all placed tasks for the target date, scheduled into the timeline.
+    (Overflow tasks are not included — same contract as before A1; callers
+    wanting them use get_prioritised_tasks_with_metadata.)
     """
-    _, _, scheduled = _schedule_for_date(db, target_date, available_hours_per_day)
+    _, _, scheduled, _ = _schedule_for_date(db, target_date, available_hours_per_day)
     return [pt.task for pt in scheduled]
 
 
@@ -683,8 +818,13 @@ def get_prioritised_tasks_with_metadata(
 ) -> tuple[list[PrioritisedTask], dict]:
     """
     Get all tasks for the target date with full metadata.
+
+    The capacity dict includes "overflow" (list of PrioritisedTask that
+    didn't fit today even after displacement, priority order) and
+    "overflow_count". NOTE: "overflow" holds live objects — JSON endpoints
+    must serialise or strip it (see /tasks/today).
     """
-    fixed, flexible, scheduled = _schedule_for_date(db, target_date, available_hours_per_day)
+    fixed, flexible, scheduled, overflow = _schedule_for_date(db, target_date, available_hours_per_day)
     gaps = calculate_gaps(fixed, target_date, include_afternoon=True)
     
     main_start = datetime.combine(target_date, time(settings.main_window_start))
@@ -706,8 +846,10 @@ def get_prioritised_tasks_with_metadata(
         "fixed_count": len(fixed),
         "flexible_count": len(flexible),
         "scheduled_count": len(scheduled),
+        "overflow": overflow,
+        "overflow_count": len(overflow),
     }
-    
+
     return scheduled, capacity
 
 
