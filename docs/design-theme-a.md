@@ -1,6 +1,6 @@
 # Theme A: Scheduling / Priority Overhaul — Design Proposal
 
-**Status:** AGREED 2026-07-10 — all open decisions resolved with Ross (see "Decisions" at the end); implementation in progress on branch `theme-a`
+**Status:** IMPLEMENTED 2026-07-10 on branch `theme-a` (commits `8ee9686`…`a9808a1`, suite 358 passing) — all open decisions resolved with Ross (see "Decisions" at the end)
 **Drafted:** 2026-07-10
 **Scope (from roadmap item 2, agreed 2026-07-07):** priority-first scheduling (9s/6s/4s laddering), VRT urgency escalating with overdue-ness, one-off-list-length priority boost, everything-time-bound (one-offs → 1-year deadlines + 6-month prompt), auto-generated prep task at 75% of a deadline's life. Designed as one unit; do not implement piecemeal.
 

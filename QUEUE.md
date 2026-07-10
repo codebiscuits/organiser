@@ -122,25 +122,30 @@ Recipes with ingredient/prep/cook metadata → weekly meal pick → generated sh
 
 ## In Progress
 
-### Theme A: scheduling/priority overhaul
-**Status:** in-progress (design agreed 2026-07-10; implementing on branch `theme-a` off `week-view-today`)
-**Added:** 2026-07-07
-
-**Description:**
-Full agreed design in `docs/design-theme-a.md`: unified effective-urgency pipeline (deadline buffer maths / VRT overdue escalation / errand auto-deadline + backlog boost) feeding banded, displacement-based scheduling with a "didn't fit today" overflow section. All 5 design decisions resolved with Ross 2026-07-10 (§5 of the doc). Implementation staged per §4: urgency refactor → A2 → A4 → A3 → A1 → A5.
-
-**Acceptance criteria:**
-- [ ] Effective-urgency refactor: per-type urgency extraction, behaviour unchanged, suite green
-- [ ] A2: overdue VRTs carry forward (`due_date <= target`) with cadence-relative urgency escalation; plain recurring unaffected
-- [ ] A4: errands get 1-year auto-deadline (`deadline_auto` column + migration), buffer-based urgency, 6-month prompt banner with date-picker / "+6 months"; auto-deadline expiry re-prompts (never swept)
-- [ ] A3: errand backlog boost (oldest-first, soft/hard thresholds, max-not-stack with A4)
-- [ ] A1: banded displacement scheduling; manual placements never evicted; unplaced 9s/6s in a visible "didn't fit today" section; due-today pinning untouched
-- [ ] A5: single auto prep task at 75% of deadline life (span ≥ 14 days) via `generated_from_task_id`; recomputed on deadline edit; deleted with parent
-- [ ] New settings knobs per §4; migrations via existing `app/database.py` pattern; regression tests per stage
+(nothing in progress)
 
 ---
 
 ## Done
+
+### Theme A: scheduling/priority overhaul
+**Status:** done (2026-07-10)
+**Added:** 2026-07-07
+
+**Description:**
+Implemented on branch `theme-a` (off `week-view-today` — merge order: quick-wins → week-view-today → theme-a), commits `8ee9686`…`a9808a1`. Full agreed design in `docs/design-theme-a.md` (all 5 open decisions resolved with Ross 2026-07-10, §5). Suite 358 passing; A4 and A5 also verified live against a scratch DB (auto-deadline stamped, overflow shelf rendered, prep task generated at 75% and cleaned up on parent completion). Stages 1–2 implemented by Sonnet; stages 3–4 finished by Fable after the Sonnet agent hit the session limit mid-A1 (its core algorithm was kept).
+
+**Acceptance criteria:**
+- [x] Effective-urgency refactor: per-type urgency extraction, behaviour unchanged, suite green
+- [x] A2: overdue VRTs carry forward (`due_date <= target`) with cadence-relative urgency escalation; plain recurring unaffected; complete/defer/delete-instance + week-view delete find past-dated projections; week view doesn't double-list
+- [x] A4: errands get 1-year auto-deadline (`deadline_auto` column + migration), buffer-based urgency with user floor, half-life prompt banner with date-picker / "+6 months"; auto-deadline expiry re-prompts (never swept); user-confirmed errand deadlines get full deadline semantics
+- [x] A3: errand backlog boost (oldest-first, soft 8 / hard 15 thresholds, max-not-stack with A4)
+- [x] A1: banded displacement scheduling; manual placements never evicted; ALL unplaced tasks in a muted "Didn't fit today" section (never silently dropped); due-today pinning untouched; overflow excluded from week today column and current-task card; `/tasks/today` serialises it
+- [x] A5: single auto prep task at 75% of deadline life (span ≥ 14 days) via `generated_from_task_id`; synced on edit; deleted with parent (undo regenerates); never chains
+- [x] Settings knobs (`vrt_escalation_half_ratio`, `errand_auto_deadline_days`, `errand_prompt_fraction`, `errand_backlog_soft/hard`, `prep_task_fraction`, `prep_task_min_span_days`); migrations via `app/database.py`; 86 regression tests added across stages (272 → 358)
+
+**Notes / constraints:**
+Displacement can't trigger in today's pipeline (tasks are processed in strict descending score order, so nothing lower-scored is ever placed before a higher one asks) — it's a correctness guarantee for post-A ordering constraints, which will place tasks out of band order. The overflow shelf is what changes behaviour today.
 
 ### Week view: today's column mirrors the live list
 **Status:** done (2026-07-08)
