@@ -73,6 +73,8 @@ Urgency runs through the same buffer maths as deadlines, with the user's own urg
 
 **Half-life prompt:** once `errand_prompt_fraction` (default 0.5, i.e. ~6 months) of an auto-deadline errand's creation→deadline span has elapsed, the daily view shows a banner ("When will you actually do this?", max 3 errands, expired ones first) with a date picker (sets a real deadline, `deadline_auto=False`) and a "+6 months" snooze (extends the auto-deadline, stays auto). See `get_errands_due_for_prompt` and the `/tasks/{id}/errand-deadline` / `/tasks/{id}/errand-snooze` endpoints.
 
+**Backlog boost** (Theme A component A3): when the pending-errand count N (all pending errands, snoozed included) exceeds `errand_backlog_soft` (default 8), the oldest ⌈N/3⌉ errands by `created_at` get +1 urgency; past `errand_backlog_hard` (default 15) the oldest ⌈N/3⌉ get +2 and the next ⌈N/3⌉ +1, so the scheduler drains the pile oldest-first. The boost is computed at list-build time and never stored. It combines with the deadline-derived urgency by max, not stacking — `min(3, max(deadline_urgency, base + boost))` — see `compute_errand_backlog_boosts`.
+
 ### Other Tasks (plain recurring)
 Manually set at creation time.
 

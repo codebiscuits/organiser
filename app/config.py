@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     # ...and once this fraction of the creation->deadline span has elapsed,
     # the daily view prompts "when will you actually do this?"
     errand_prompt_fraction: float = 0.5
+
+    # Errand backlog boost (Theme A A3): when the pending-errand count
+    # exceeds soft, the oldest third get +1 urgency; past hard, the oldest
+    # third get +2 and the next third +1 (computed at list-build time,
+    # never stored — see compute_errand_backlog_boosts)
+    errand_backlog_soft: int = 8
+    errand_backlog_hard: int = 15
     
     # Push notifications
     vapid_private_key: str = ""

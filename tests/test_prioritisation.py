@@ -24,6 +24,7 @@ from app.services.prioritisation import (
     schedule_tasks_into_timeline,
     bin_tasks_by_priority,
     effective_urgency_for_vrt,
+    compute_errand_backlog_boosts,
     effective_urgency_for_recurring,
     effective_urgency_for_errand,
     effective_urgency_for_deadline,
@@ -1702,3 +1703,157 @@ class TestErrandDeadlineSemanticsDB:
         pt = next(p for p in result if p.task.id == task.id)
         assert pt.calculated_urgency == 2
         assert pt.due_today is False
+
+
+# ===========================================================================
+# Theme A, component A3 — errand backlog boost: oldest errands get an
+# urgency bump when the pending pile grows. Computed at list-build time,
+# combines with A4's deadline urgency by max (never stacking), clamped at 3.
+# ===========================================================================
+
+class TestErrandBacklogBoosts:
+    def _add_errands(self, db, count, snoozed_indices=()):
+        """Create `count` pending errands, oldest first (staggered created_at)."""
+        tasks = []
+        base_created = datetime.now() - timedelta(days=count)
+        for i in range(count):
+            task = Task(
+                type="errand",
+                title=f"Errand {i}",
+                estimated_duration=15,
+                importance=1,
+                urgency=1,
+                status="pending",
+                created_at=base_created + timedelta(days=i),
+                snooze_until=(
+                    str(date.today() + timedelta(days=2))
+                    if i in snoozed_indices else None
+                ),
+            )
+            db.add(task)
+            tasks.append(task)
+        db.commit()
+        for t in tasks:
+            db.refresh(t)
+        return tasks
+
+    def test_at_soft_threshold_no_boost(self, db):
+        self._add_errands(db, 8)  # N == soft (8), not >
+        assert compute_errand_backlog_boosts(db) == {}
+
+    def test_above_soft_oldest_third_gets_plus_1(self, db):
+        tasks = self._add_errands(db, 9)  # ceil(9/3) = 3
+        boosts = compute_errand_backlog_boosts(db)
+
+        assert {t.id for t in tasks[:3]} == set(boosts.keys())
+        assert all(b == 1 for b in boosts.values())
+
+    def test_above_hard_two_tiers(self, db):
+        tasks = self._add_errands(db, 16)  # ceil(16/3) = 6
+        boosts = compute_errand_backlog_boosts(db)
+
+        assert all(boosts[t.id] == 2 for t in tasks[:6])
+        assert all(boosts[t.id] == 1 for t in tasks[6:12])
+        assert all(t.id not in boosts for t in tasks[12:])
+
+    def test_snoozed_errands_count_toward_n_and_can_be_boosted(self, db):
+        # 9 pending errands, the oldest snoozed: N is still 9 (> soft) and
+        # the snoozed one is among the boosted oldest third.
+        tasks = self._add_errands(db, 9, snoozed_indices={0})
+        boosts = compute_errand_backlog_boosts(db)
+
+        assert tasks[0].id in boosts
+
+    def test_completed_errands_do_not_count(self, db):
+        tasks = self._add_errands(db, 9)
+        tasks[0].status = "completed"
+        db.commit()
+
+        # N drops to 8 == soft -> no boosts at all
+        assert compute_errand_backlog_boosts(db) == {}
+
+
+class TestBacklogBoostUrgencyCombination:
+    def _make_errand(
+        self,
+        urgency: int | None = 1,
+        deadline_at: datetime | None = None,
+        deadline_auto: bool = False,
+        estimated_duration: int = 30,
+    ) -> Task:
+        task = MagicMock(spec=Task)
+        task.type = "errand"
+        task.urgency = urgency
+        task.deadline_at = deadline_at
+        task.deadline_auto = deadline_auto
+        task.estimated_duration = estimated_duration
+        return task
+
+    def test_boost_lifts_base_urgency(self):
+        task = self._make_errand(urgency=1, deadline_at=None)
+        assert effective_urgency_for_errand(task, backlog_boost=1) == (2, False)
+
+    def test_boost_does_not_stack_with_buffer_urgency(self):
+        """Deadline says 3, boost says base+2=3: max wins, no 4."""
+        task = self._make_errand(
+            urgency=1,
+            deadline_at=datetime.now() + timedelta(days=1),
+            deadline_auto=True,
+        )
+        assert effective_urgency_for_errand(task, backlog_boost=2) == (3, False)
+
+    def test_boost_clamped_at_3(self):
+        task = self._make_errand(urgency=2, deadline_at=None)
+        assert effective_urgency_for_errand(task, backlog_boost=2) == (3, False)
+
+    def test_max_of_buffer_and_boost_when_boost_wins(self):
+        """Far deadline (buffer urgency 1), boost +1 on base 1 -> 2."""
+        task = self._make_errand(
+            urgency=1,
+            deadline_at=datetime.now() + timedelta(days=300),
+            deadline_auto=True,
+        )
+        assert effective_urgency_for_errand(task, backlog_boost=1) == (2, False)
+
+    def test_due_today_pinning_unaffected_by_boost(self):
+        task = self._make_errand(
+            urgency=1,
+            deadline_at=datetime.now() + timedelta(hours=2),
+            deadline_auto=False,
+        )
+        assert effective_urgency_for_errand(task, backlog_boost=2) == (3, True)
+
+
+class TestBacklogBoostInFlexibleListDB:
+    def test_oldest_errand_scores_higher_when_backlog_exceeds_soft(self, db):
+        base_created = datetime.now() - timedelta(days=20)
+        tasks = []
+        for i in range(9):
+            task = Task(
+                type="errand",
+                title=f"Backlog errand {i}",
+                estimated_duration=15,
+                importance=1,
+                urgency=1,
+                status="pending",
+                created_at=base_created + timedelta(days=i),
+                # Far auto-deadline so A4's buffer urgency stays at 1 and
+                # any change here is attributable to the boost alone.
+                deadline_at=datetime.now() + timedelta(days=300),
+                deadline_auto=True,
+            )
+            db.add(task)
+            tasks.append(task)
+        db.commit()
+        for t in tasks:
+            db.refresh(t)
+
+        result = get_flexible_tasks(db, date.today())
+        by_id = {pt.task.id: pt for pt in result}
+
+        oldest = by_id[tasks[0].id]
+        newest = by_id[tasks[-1].id]
+        assert oldest.calculated_urgency == 2   # base 1 + boost 1
+        assert oldest.priority_score == 2       # importance 1 x urgency 2
+        assert newest.calculated_urgency == 1   # unboosted
+        assert newest.priority_score == 1

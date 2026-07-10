@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, date, time, timedelta
 from enum import IntEnum
 from dataclasses import dataclass, field
@@ -88,8 +89,45 @@ def effective_urgency_for_recurring(task: Task, default: int = 1) -> int:
     return task.urgency or default
 
 
+def compute_errand_backlog_boosts(db: Session) -> dict[str, int]:
+    """
+    Theme A component A3 — pressure valve for a growing errand list.
+
+    N = count of ALL pending errands (snooze is deliberately ignored: a
+    snoozed errand still contributes to the pile). When N exceeds the soft
+    threshold, the oldest ⌈N/3⌉ errands (by created_at) get +1 urgency;
+    past the hard threshold the oldest ⌈N/3⌉ get +2 and the next ⌈N/3⌉ +1,
+    so the scheduler drains the backlog oldest-first.
+
+    Computed at list-build time and never stored — the urgency shown in
+    edit forms stays the user's own setting. Returns {task_id: boost} for
+    boosted errands only; one query regardless of N.
+    """
+    rows = (
+        db.query(Task.id)
+        .filter(Task.type == "errand", Task.status == "pending")
+        .order_by(Task.created_at.asc(), Task.id.asc())
+        .all()
+    )
+    n = len(rows)
+    boosts: dict[str, int] = {}
+    if n <= settings.errand_backlog_soft:
+        return boosts
+
+    third = math.ceil(n / 3)
+    if n > settings.errand_backlog_hard:
+        for (task_id,) in rows[:third]:
+            boosts[task_id] = 2
+        for (task_id,) in rows[third:2 * third]:
+            boosts[task_id] = 1
+    else:
+        for (task_id,) in rows[:third]:
+            boosts[task_id] = 1
+    return boosts
+
+
 def effective_urgency_for_errand(
-    task: Task, available_hours_per_day: int = 6
+    task: Task, available_hours_per_day: int = 6, backlog_boost: int = 0
 ) -> tuple[int, bool]:
     """
     Effective urgency for an errand, returning (urgency, due_today).
@@ -110,20 +148,30 @@ def effective_urgency_for_errand(
     In all buffer-based cases the user's own urgency setting acts as a
     floor: max(base, computed), so a hand-set urgency-3 errand is never
     downgraded by a comfortably distant auto-deadline.
+
+    `backlog_boost` (Theme A component A3, see
+    compute_errand_backlog_boosts) combines by taking the max of the
+    deadline-derived urgency and base + boost — the two pressures don't
+    stack — and the result is clamped to 3.
     """
     base = task.urgency or 1
-    if not task.deadline_at:
-        return base, False
-
     today = date.today()
-    if task.deadline_auto:
-        if task.deadline_at.date() < today:
-            return 3, False
-        return max(base, calculate_urgency_for_deadline(task, available_hours_per_day)), False
+    due_today = False
 
-    if task.deadline_at.date() == today:
-        return 3, True
-    return max(base, calculate_urgency_for_deadline(task, available_hours_per_day)), False
+    if not task.deadline_at:
+        urgency = base
+    elif task.deadline_auto:
+        if task.deadline_at.date() < today:
+            urgency = 3
+        else:
+            urgency = max(base, calculate_urgency_for_deadline(task, available_hours_per_day))
+    elif task.deadline_at.date() == today:
+        urgency, due_today = 3, True
+    else:
+        urgency = max(base, calculate_urgency_for_deadline(task, available_hours_per_day))
+
+    effective = min(3, max(urgency, base + backlog_boost))
+    return effective, due_today
 
 
 def effective_urgency_for_deadline(
@@ -371,6 +419,8 @@ def get_flexible_tasks(db: Session, target_date: date, available_hours_per_day: 
         or_(Task.snooze_until.is_(None), Task.snooze_until <= str(target_date)),
     ).all()
 
+    backlog_boosts = compute_errand_backlog_boosts(db)
+
     for task in errands:
         if (
             task.deadline_at
@@ -381,7 +431,9 @@ def get_flexible_tasks(db: Session, target_date: date, available_hours_per_day: 
             # auto-complete sweep, same as deadline tasks. (Auto deadlines
             # never take this branch: expiry escalates urgency instead.)
             continue
-        urgency, due_today = effective_urgency_for_errand(task, available_hours_per_day)
+        urgency, due_today = effective_urgency_for_errand(
+            task, available_hours_per_day, backlog_boosts.get(task.id, 0)
+        )
         flexible.append(PrioritisedTask(
             task=task,
             priority_score=calculate_priority_score(task.importance, urgency),
