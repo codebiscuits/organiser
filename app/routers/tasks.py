@@ -466,6 +466,7 @@ async def get_today_tasks(db: Session = Depends(get_db)):
             "due_today": pt.due_today,
             "selected_exercise": pt.selected_exercise,
             "deadline_at": pt.task.deadline_at.isoformat() if pt.task.deadline_at else None,
+            "planning_window_days": pt.task.planning_window_days,
             "scheduled_at": pt.task.scheduled_at.isoformat() if pt.task.scheduled_at else None,
             "location": pt.task.location,
             "allow_afternoon": pt.task.allow_afternoon,
@@ -748,6 +749,7 @@ async def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
         urgency=task_data.urgency,
         allow_afternoon=task_data.allow_afternoon,
         deadline_at=task_data.deadline_at,
+        planning_window_days=task_data.planning_window_days,
         scheduled_at=task_data.scheduled_at,
         prep_duration=task_data.prep_duration,
         scheduled_time=task_data.scheduled_time,
@@ -868,11 +870,12 @@ async def get_variable_complete_form(
     preset = None
     if task.preset_id:
         preset = db.query(TaskPreset).filter(TaskPreset.id == task.preset_id).first()
+    recurrence = db.query(Recurrence).filter(Recurrence.task_id == task.id).first()
 
     response = templates.TemplateResponse(
         request,
         "components/variable_complete_form.html",
-        {"task": task, "preset": preset},
+        {"task": task, "preset": preset, "recurrence": recurrence},
     )
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -1360,6 +1363,11 @@ def _replace_task_for_type_change(db: Session, old_task: Task, task_data: TaskUp
         # (Errands accept one too now — user-chosen if supplied, else the
         # auto-deadline applied just below.)
         deadline_at=task_data.deadline_at if new_type in ("deadline", "errand") else None,
+        planning_window_days=(
+            task_data.planning_window_days
+            if "planning_window_days" in task_data.model_fields_set
+            else old_task.planning_window_days
+        ),
         scheduled_at=task_data.scheduled_at if new_type == "appointment" else None,
         prep_duration=task_data.prep_duration if task_data.prep_duration is not None else old_task.prep_duration,
         scheduled_time=(
@@ -1445,6 +1453,8 @@ async def update_task(task_id: str, task_data: TaskUpdate, response: Response, d
             # An explicitly edited errand deadline is a user commitment,
             # not the soft auto-horizon (Theme A A4).
             task.deadline_auto = False
+    if "planning_window_days" in task_data.model_fields_set:
+        task.planning_window_days = task_data.planning_window_days
     if task_data.scheduled_at is not None:
         task.scheduled_at = task_data.scheduled_at
     if task_data.prep_duration is not None:

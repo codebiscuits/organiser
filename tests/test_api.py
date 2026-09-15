@@ -139,6 +139,12 @@ class TestCreateTask:
         assert data["type"] == "deadline"
         assert data["deadline_at"] == "2099-04-15T23:59:00"
 
+    def test_new_task_form_offers_a_planning_window(self, client):
+        response = client.get("/tasks/new")
+        assert response.status_code == 200
+        assert 'id="planning_window_days"' in response.text
+        assert "Show in daily list" in response.text
+
     def test_create_recurring_generates_projections(self, client, db):
         data = create_task(client, RECURRING_PAYLOAD)
         task_id = data["id"]
@@ -744,6 +750,50 @@ class TestVariableRecurringCompletion:
         ).first()
         assert proj is not None
 
+    def test_completion_form_prefills_task_recurrence_interval(self, client, db):
+        data = create_task(client, {
+            "type": "variable_recurring",
+            "title": "Replace water filter",
+            "importance": 2,
+            "urgency": 2,
+            "recurrence": {
+                "interval_type": "daily",
+                "interval_multiple": 21,
+                "start_date": date.today().isoformat() + "T00:00:00",
+            },
+        })
+
+        response = client.get(f"/tasks/{data['id']}/complete/variable")
+        assert response.status_code == 200
+        assert "daysUntilNext: 21" in response.text
+
+    def test_completion_form_uses_task_interval_over_preset_interval(self, client, db):
+        preset = TaskPreset(
+            name="Seven-day template",
+            type="variable_recurring",
+            interval_multiple=7,
+        )
+        db.add(preset)
+        db.commit()
+        db.refresh(preset)
+
+        data = create_task(client, {
+            "type": "variable_recurring",
+            "title": "Twenty-one day task",
+            "importance": 2,
+            "urgency": 2,
+            "preset_id": preset.id,
+            "recurrence": {
+                "interval_type": "daily",
+                "interval_multiple": 21,
+                "start_date": date.today().isoformat() + "T00:00:00",
+            },
+        })
+
+        response = client.get(f"/tasks/{data['id']}/complete/variable")
+        assert response.status_code == 200
+        assert "daysUntilNext: 21" in response.text
+
     def test_variable_recurring_completion_removes_todays_projection(self, client, db):
         data = self._make_variable_recurring(client, db)
         task_id = data["id"]
@@ -1316,6 +1366,18 @@ class TestUpdateTask:
         assert body["title"] == "Buy bread"
         assert body["importance"] == 3
         assert body["urgency"] == ERRAND_PAYLOAD["urgency"]  # unchanged
+
+    def test_update_can_set_and_clear_planning_window(self, client, db):
+        data = create_task(client, DEADLINE_PAYLOAD)
+        task_id = data["id"]
+
+        set_response = client.put(f"/tasks/{task_id}", json={"planning_window_days": 21})
+        assert set_response.status_code == 200
+        assert set_response.json()["planning_window_days"] == 21
+
+        clear_response = client.put(f"/tasks/{task_id}", json={"planning_window_days": None})
+        assert clear_response.status_code == 200
+        assert clear_response.json()["planning_window_days"] is None
 
     def test_update_recurring_task_recurrence(self, client, db):
         data = create_task(client, RECURRING_PAYLOAD)
@@ -2911,6 +2973,8 @@ class TestPrepTaskGeneration:
         assert prep.status == "pending"
         assert prep.importance == 3
         assert prep.estimated_duration == 30  # 25% of 120
+        # The prep task is an early-start signal, not an immediate extra item.
+        assert prep.planning_window_days == 0
         # 75% of a 60-day span = 45 days from creation
         assert prep.deadline_at.date() == date.today() + timedelta(days=45)
 

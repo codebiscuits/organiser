@@ -61,6 +61,7 @@ function taskForm() {
             urgency: {{ task.urgency if task and task.urgency else 2 }},
             allow_afternoon: {{ 'true' if task and task.allow_afternoon else 'false' }},
             deadline_at: '{{ task.deadline_at.strftime("%Y-%m-%dT%H:%M") if task and task.deadline_at else '' }}',
+            planning_window_days: {{ task.planning_window_days if task and task.planning_window_days is not none else 'null' }},
             scheduled_at: '{{ task.scheduled_at.strftime("%Y-%m-%dT%H:%M") if task and task.scheduled_at else '' }}',
             prep_duration: {{ task.prep_duration if task and task.prep_duration else 'null' }},
             scheduled_time: '{{ task.scheduled_time.strftime("%H:%M") if task and task.scheduled_time else '' }}',

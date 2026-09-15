@@ -113,6 +113,7 @@ async def admin_task_create(
     prep_duration: Optional[int] = Form(None),
     location: Optional[str] = Form(None),
     deadline_at: Optional[str] = Form(None),
+    planning_window_days: Optional[int] = Form(None),
     interval_type: Optional[str] = Form(None),
     interval_multiple: Optional[int] = Form(1),
     day_of_week: Optional[List[str]] = Form(None),
@@ -134,6 +135,7 @@ async def admin_task_create(
         prep_duration=prep_duration,
         location=location or None,
         deadline_at=datetime.fromisoformat(deadline_at) if deadline_at else None,
+        planning_window_days=planning_window_days,
         scheduled_time=time.fromisoformat(scheduled_time) if scheduled_time else None,
     )
     apply_errand_auto_deadline(task)
@@ -206,6 +208,7 @@ async def admin_task_update(
     prep_duration: Optional[int] = Form(None),
     location: Optional[str] = Form(None),
     deadline_at: Optional[str] = Form(None),
+    planning_window_days: Optional[int] = Form(None),
     interval_type: Optional[str] = Form(None),
     interval_multiple: Optional[int] = Form(1),
     day_of_week: Optional[List[str]] = Form(None),
@@ -230,6 +233,7 @@ async def admin_task_update(
     task.prep_duration = prep_duration
     task.location = location or None
     task.deadline_at = datetime.fromisoformat(deadline_at) if deadline_at else None
+    task.planning_window_days = planning_window_days
     task.scheduled_time = time.fromisoformat(scheduled_time) if scheduled_time else None
 
     existing_recurrence = db.query(Recurrence).filter(Recurrence.task_id == task_id).first()

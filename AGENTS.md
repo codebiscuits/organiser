@@ -74,6 +74,7 @@ importance      INT           1-3
 urgency         INT           1-3 | NULL (deadlines: calculated; others: manual)
 allow_afternoon BOOL          can be auto-scheduled in 3pm-6pm window
 deadline_at     DATETIME      for type=deadline
+planning_window_days INT      optional: show deadline/errand this many days before due date (NULL = immediately)
 scheduled_at    DATETIME      for type=appointment (exact time)
 prep_duration   INT           minutes; for appointments; triggers auto-prep task creation
 scheduled_time  TIME          optional fixed daily time for recurring tasks (makes them "fixed")
@@ -204,7 +205,7 @@ class PrioritisedTask:
 
 1. **`get_fixed_tasks(db, date)`** — Appointments on `target_date` + recurring tasks with `scheduled_time` that have a projection for `target_date`. Sorted by `scheduled_time`.
 
-2. **`get_flexible_tasks(db, date)`** — Deadlines + recurring/errand tasks from projection table without `scheduled_at`. Sorted by `sort_key()` descending: `(due_today, priority_score, recurrence_timescale, deferred_count)`.
+2. **`get_flexible_tasks(db, date)`** — Deadlines + recurring/errand tasks from projection table without `scheduled_at`. A deadline or errand with `planning_window_days` is excluded until that many days before its due date. Sorted by `sort_key()` descending: `(due_today, priority_score, recurrence_timescale, deferred_count)`.
    - Deadlines with `deadline_date < target_date` are skipped entirely (handled by the auto-complete sweep, not the scheduler).
    - Deadlines with `deadline_date == today` get `due_today=True` and `urgency=3` (forced), regardless of how much buffer time remains.
    - All other deadlines use `calculate_urgency_for_deadline()` as before.

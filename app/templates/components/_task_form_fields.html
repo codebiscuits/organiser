@@ -138,6 +138,16 @@ Optional:
     </div>
 </template>
 
+<!-- Deadline planning window -->
+<template x-if="['deadline', 'errand'].includes(form.type)">
+    <div class="form-group">
+        <label for="planning_window_days">Show in daily list</label>
+        <input type="number" id="planning_window_days" x-model.number="form.planning_window_days"
+               {% if useFormNames %}name="planning_window_days"{% endif %} min="0" placeholder="e.g., 14">
+        <span class="form-hint">Days before the deadline to start showing this task. Blank = always available. 0 = only on the deadline day.</span>
+    </div>
+</template>
+
 <!-- Recurring/Workout Fields (NOT variable_recurring) -->
 <template x-if="form.type === 'recurring' || form.type === 'workout'">
     <div class="type-specific-fields">

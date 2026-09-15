@@ -1,5 +1,5 @@
 <div class="modal-overlay" id="variable-complete-modal" x-data="{
-    daysUntilNext: {{ preset.interval_multiple if preset and preset.interval_multiple else 7 }},
+    daysUntilNext: {{ recurrence.interval_multiple if recurrence and recurrence.interval_multiple else (preset.interval_multiple if preset and preset.interval_multiple else 7) }},
     allowedDays: [{{ task.allowed_days if task.allowed_days else '' }}],
     dayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     get nextDate() {

@@ -76,6 +76,18 @@ def effective_urgency_for_appointment() -> int:
     return 3
 
 
+def is_within_planning_window(task: Task, target_date: date) -> bool:
+    """Whether a deadline-based task is eligible for ``target_date``'s list.
+
+    A NULL planning window preserves legacy immediate availability. A value of
+    zero means the task appears only on its deadline date.
+    """
+    if task.planning_window_days is None or not task.deadline_at:
+        return True
+    first_eligible_date = task.deadline_at.date() - timedelta(days=task.planning_window_days)
+    return target_date >= first_eligible_date
+
+
 def effective_urgency_for_recurring(task: Task, default: int = 1) -> int:
     """
     Effective urgency for a plain recurring (or workout) task: the user's own
@@ -341,6 +353,8 @@ def get_flexible_tasks(db: Session, target_date: date, available_hours_per_day: 
     ).all()
     
     for task in deadlines:
+        if not is_within_planning_window(task, target_date):
+            continue
         if task.deadline_at and task.deadline_at.date() < target_date:
             # Already overdue — handled by the auto-complete sweep.
             continue
@@ -422,6 +436,8 @@ def get_flexible_tasks(db: Session, target_date: date, available_hours_per_day: 
     backlog_boosts = compute_errand_backlog_boosts(db)
 
     for task in errands:
+        if not is_within_planning_window(task, target_date):
+            continue
         if (
             task.deadline_at
             and not task.deadline_auto

@@ -207,7 +207,8 @@ A fixed-time commitment.
 ### 2. Deadline
 A task with a firm due date and time.
 
-- **Key fields:** `deadline_at` (datetime), `estimated_duration`
+- **Key fields:** `deadline_at` (datetime), `estimated_duration`, `planning_window_days` (optional)
+- **Daily-list window:** Set `planning_window_days` to the number of days before the deadline when the task should first appear. Leave it blank to preserve immediate availability.
 - **Urgency:** Calculated dynamically — see Priority Calculation below
 - **Scheduling:** Flexible — fitted into gaps by priority
 - **Due today:** A deadline due today is pinned to the top of the schedule (red styling, urgency 3) instead of being fitted into a gap — see [Overdue Handling & Undo](#overdue-handling--undo)

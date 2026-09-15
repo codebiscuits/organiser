@@ -53,6 +53,7 @@ class TaskCreate(BaseModel):
     urgency: int | None = Field(default=None, ge=1, le=3)
     allow_afternoon: bool = False
     deadline_at: datetime | None = None
+    planning_window_days: int | None = Field(default=None, ge=0)
     scheduled_at: datetime | None = None
     prep_duration: int | None = None
     scheduled_time: time | None = None
@@ -80,6 +81,7 @@ class TaskUpdate(BaseModel):
     urgency: int | None = Field(default=None, ge=1, le=3)
     allow_afternoon: bool | None = None
     deadline_at: datetime | None = None
+    planning_window_days: int | None = Field(default=None, ge=0)
     scheduled_at: datetime | None = None
     prep_duration: int | None = None
     scheduled_time: time | None = None
@@ -110,6 +112,7 @@ class TaskResponse(BaseModel):
     allow_afternoon: bool
     deadline_at: datetime | None
     deadline_auto: bool = False
+    planning_window_days: int | None = None
     scheduled_at: datetime | None
     prep_duration: int | None
     scheduled_time: time | None

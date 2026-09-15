@@ -19,6 +19,10 @@ class Task(Base):
     allow_afternoon = Column(Boolean, default=False)
     deadline_at = Column(DateTime)  # for deadlines (and errands — every errand gets one, see deadline_auto)
     deadline_auto = Column(Boolean, nullable=False, default=False, server_default="0")  # True: deadline_at was auto-set on an errand (Theme A A4); never pinned or swept
+    # Optional lead time for deadline-based tasks. While the due date is farther
+    # away than this many days, the task is not a daily-list candidate.
+    # NULL preserves legacy behaviour (available immediately).
+    planning_window_days = Column(Integer, CheckConstraint("planning_window_days >= 0"))
     scheduled_at = Column(DateTime)  # for appointments
     prep_duration = Column(Integer)  # minutes, for appointments
     scheduled_time = Column(Time)  # optional, for recurring tasks with fixed daily time

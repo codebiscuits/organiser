@@ -84,6 +84,7 @@ def sync_prep_task(db: Session, task: Task) -> None:
         existing.deadline_at = prep_deadline
         existing.title = f"Prep: {task.title}"
         existing.importance = task.importance
+        existing.planning_window_days = 0
         return
 
     db.add(Task(
@@ -93,6 +94,7 @@ def sync_prep_task(db: Session, task: Task) -> None:
         importance=task.importance,
         allow_afternoon=task.allow_afternoon,
         deadline_at=prep_deadline,
+        planning_window_days=0,
         status="pending",
         generated_from_task_id=task.id,
     ))

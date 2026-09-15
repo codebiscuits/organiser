@@ -29,6 +29,14 @@ def run_migrations(eng):
         )""",
         "ALTER TABLE action_log ADD COLUMN exclusions_snapshot TEXT",
         "ALTER TABLE tasks ADD COLUMN deadline_auto BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE tasks ADD COLUMN planning_window_days INTEGER CHECK (planning_window_days >= 0)",
+        # Prep tasks represent a specific future start signal; without a
+        # zero-day window they would immediately reintroduce the noise this
+        # feature prevents. Existing generated prep rows are safe to update.
+        """UPDATE tasks
+           SET planning_window_days = 0
+           WHERE generated_from_task_id IS NOT NULL
+             AND planning_window_days IS NULL""",
         # Theme A component A4 data migration: existing errands with no
         # deadline get an auto-deadline of max(created_at + 365 days,
         # today + 30 days) — old stock starts moving without anything

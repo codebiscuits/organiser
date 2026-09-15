@@ -523,6 +523,22 @@ class TestGetFlexibleTasksDB:
         titles = [pt.task.title for pt in result]
         assert "Submit report" in titles
 
+    def test_deadline_is_hidden_until_its_planning_window(self, db):
+        task = Task(
+            type="deadline",
+            title="Next year's paperwork",
+            deadline_at=datetime.combine(FUTURE_DATE + timedelta(days=30), time(17, 0)),
+            planning_window_days=14,
+            estimated_duration=60,
+            importance=2,
+            status="pending",
+        )
+        db.add(task)
+        db.commit()
+
+        result = get_flexible_tasks(db, FUTURE_DATE)
+        assert task.id not in [pt.task.id for pt in result]
+
     def test_errand_returned_as_flexible(self, db):
         task = Task(
             type="errand",
