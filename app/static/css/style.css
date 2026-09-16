@@ -134,6 +134,54 @@ nav a:hover {
     color: var(--accent-deep);
 }
 
+/* Narrow screens: title/nav at left, controls stacked at right. */
+@media (max-width: 640px) {
+    header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 34px;
+        grid-template-rows: auto auto;
+        column-gap: 0.375rem;
+        row-gap: 0.25rem;
+        align-items: center;
+        padding: 0.75rem 1rem;
+    }
+
+    header h1 {
+        grid-column: 1;
+        grid-row: 1;
+        white-space: nowrap;
+    }
+
+    header nav {
+        grid-column: 1;
+        grid-row: 2;
+        display: flex;
+        min-width: 0;
+        gap: 0.3125rem;
+        white-space: nowrap;
+    }
+
+    header nav a {
+        margin-left: 0;
+        font-size: 0.8125rem;
+    }
+
+    .notify-toggle {
+        grid-column: 2;
+        grid-row: 1;
+    }
+
+    .theme-toggle {
+        grid-column: 2;
+        grid-row: 2;
+    }
+
+    .notify-toggle,
+    .theme-toggle {
+        margin-left: 0;
+    }
+}
+
 main {
     max-width: 600px;
     margin: 0 auto;
