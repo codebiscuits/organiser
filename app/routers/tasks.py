@@ -36,16 +36,22 @@ def _sync_task_notifications(db: Session, task: Task, offsets: list[int]) -> Non
     """
     Replace task.notifications with one row per (deduped) offset.
 
-    Past-time guard: if scheduled_at - offset is already in the past at the
-    time of creation/update, the row is stamped sent_at=now immediately so
+    Past-time guard: if the anchor minus the offset is already in the past at
+    the time of creation/update, the row is stamped sent_at=now immediately so
     the scheduler's fire-when-overdue check doesn't instantly spam it.
+
+    The anchor is scheduled_at for an appointment and deadline_at for a
+    deadline (see Task.notification_anchor). Reading scheduled_at alone here
+    would leave every deadline's rows unguarded, so a reminder set for
+    "2 days before" on a deadline already inside 2 days would fire at once.
     """
     db.query(TaskNotification).filter(TaskNotification.task_id == task.id).delete()
 
     now = datetime.now()
+    anchor = task.notification_anchor
     for offset in sorted(set(offsets)):
         sent_at = None
-        if task.scheduled_at is not None and (task.scheduled_at - timedelta(minutes=offset)) <= now:
+        if anchor is not None and (anchor - timedelta(minutes=offset)) <= now:
             sent_at = now
         db.add(TaskNotification(task_id=task.id, offset_minutes=offset, sent_at=sent_at))
 
@@ -1396,7 +1402,7 @@ def _replace_task_for_type_change(db: Session, old_task: Task, task_data: TaskUp
     for tag_id in tag_ids:
         db.add(TaskTag(task_id=new_task.id, tag_id=tag_id))
 
-    if new_type == "appointment" and task_data.notification_offsets:
+    if new_type in ("appointment", "deadline") and task_data.notification_offsets:
         _sync_task_notifications(db, new_task, task_data.notification_offsets)
 
     # The old task is fully superseded by new_task above — remove it and

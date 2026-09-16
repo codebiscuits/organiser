@@ -53,6 +53,26 @@ class Task(Base):
     def notification_offsets(self):
         return sorted(n.offset_minutes for n in self.notifications)
 
+    @property
+    def notification_anchor(self):
+        """
+        The time this task's notifications count back from, or None if it has none.
+
+        An appointment anchors on scheduled_at: the time Ross has to be somewhere.
+        A deadline anchors on deadline_at: the time the work has to be finished by.
+
+        Every other type deliberately returns None. Recurring, variable_recurring
+        and workout tasks are placed on a day, not at a time. An errand is given an
+        automatic far-future deadline_at (see apply_errand_auto_deadline), which is
+        a scheduling horizon rather than a real commitment, so counting back from it
+        would fire an alert about a date Ross never chose.
+        """
+        if self.type == "deadline":
+            return self.deadline_at
+        if self.type == "appointment":
+            return self.scheduled_at
+        return None
+
 
 class CompletedTask(Base):
     __tablename__ = "completed_tasks"

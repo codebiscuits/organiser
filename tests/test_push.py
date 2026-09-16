@@ -417,3 +417,172 @@ class TestPushRouter:
         assert {r["result"] for r in results} == {"ok", "gone"}
         assert db.query(PushSubscription).filter_by(endpoint="https://gone").count() == 0
         assert db.query(PushSubscription).filter_by(endpoint="https://ok").count() == 1
+
+
+# ---------------------------------------------------------------------------
+# Deadline notifications (added 2026-09-16)
+#
+# Before this date both scheduler paths filtered on scheduled_at, which only
+# appointments have. Deadlines carry deadline_at, so they could never notify:
+# 14 of Ross's 20 dated pending tasks were silently excluded. These tests pin
+# the anchor behaviour so that cannot regress unnoticed.
+# ---------------------------------------------------------------------------
+
+DEADLINE = {
+    "type": "deadline",
+    "title": "File the tax return",
+    "importance": 3,
+    "deadline_at": "2099-06-01T10:00:00",
+    "estimated_duration": 30,
+}
+
+
+class TestNotificationAnchor:
+    def test_appointment_anchors_on_scheduled_at(self):
+        when = datetime(2099, 6, 1, 10, 0)
+        task = Task(type="appointment", title="A", importance=2, scheduled_at=when)
+        assert task.notification_anchor == when
+
+    def test_deadline_anchors_on_deadline_at(self):
+        when = datetime(2099, 6, 1, 10, 0)
+        task = Task(type="deadline", title="D", importance=2, deadline_at=when)
+        assert task.notification_anchor == when
+
+    def test_errand_has_no_anchor_despite_auto_deadline(self):
+        # Every errand is given an automatic far-future deadline_at as a
+        # scheduling horizon. It is not a date Ross chose, so it must never
+        # fire a notification.
+        task = Task(
+            type="errand", title="E", importance=2,
+            deadline_at=datetime(2099, 6, 1, 10, 0),
+        )
+        assert task.notification_anchor is None
+
+    @pytest.mark.parametrize("task_type", ["recurring", "variable_recurring", "workout"])
+    def test_untimed_types_have_no_anchor(self, task_type):
+        task = Task(type=task_type, title="R", importance=2)
+        assert task.notification_anchor is None
+
+
+class TestSchedulerDeadlineNotifications:
+    def test_deadline_notification_fires(self, db):
+        now = datetime.now()
+        task = Task(
+            type="deadline", title="Book wrap-around", importance=3, status="pending",
+            deadline_at=now + timedelta(minutes=5),
+        )
+        db.add(task)
+        db.flush()
+        due = TaskNotification(task_id=task.id, offset_minutes=30)
+        db.add(due)
+        db.add(_sub("https://x"))
+        db.commit()
+
+        with patch.object(scheduler_service, "send_push", return_value="ok") as mock_send:
+            scheduler_service._check_task_notifications(db)
+
+        db.refresh(due)
+        assert due.sent_at is not None
+        assert mock_send.call_count == 1
+
+    def test_deadline_notification_not_due_yet_does_not_fire(self, db):
+        now = datetime.now()
+        task = Task(
+            type="deadline", title="Later", importance=3, status="pending",
+            deadline_at=now + timedelta(days=5),
+        )
+        db.add(task)
+        db.flush()
+        not_due = TaskNotification(task_id=task.id, offset_minutes=60)
+        db.add(not_due)
+        db.add(_sub("https://x"))
+        db.commit()
+
+        with patch.object(scheduler_service, "send_push", return_value="ok") as mock_send:
+            scheduler_service._check_task_notifications(db)
+
+        db.refresh(not_due)
+        assert not_due.sent_at is None
+        assert mock_send.call_count == 0
+
+    def test_errand_with_deadline_at_never_fires(self, db):
+        now = datetime.now()
+        task = Task(
+            type="errand", title="Buy milk", importance=2, status="pending",
+            deadline_at=now - timedelta(days=1),
+        )
+        db.add(task)
+        db.flush()
+        row = TaskNotification(task_id=task.id, offset_minutes=0)
+        db.add(row)
+        db.add(_sub("https://x"))
+        db.commit()
+
+        with patch.object(scheduler_service, "send_push", return_value="ok") as mock_send:
+            scheduler_service._check_task_notifications(db)
+
+        db.refresh(row)
+        assert row.sent_at is None
+        assert mock_send.call_count == 0
+
+    def test_deadline_body_says_due(self, db):
+        now = datetime.now()
+        task = Task(
+            type="deadline", title="Tax return", importance=3, status="pending",
+            deadline_at=now + timedelta(hours=2),
+        )
+        db.add(task)
+        db.flush()
+        db.add(TaskNotification(task_id=task.id, offset_minutes=180))
+        db.add(_sub("https://x"))
+        db.commit()
+
+        with patch.object(scheduler_service, "send_push", return_value="ok") as mock_send:
+            scheduler_service._check_task_notifications(db)
+
+        body = mock_send.call_args[0][2]
+        assert "due" in body.lower()
+
+
+class TestPerTaskNotificationsOnDeadlines:
+    def test_create_deadline_with_offsets_creates_rows(self, client, db):
+        resp = client.post("/tasks/", json={**DEADLINE, "notification_offsets": [0, 60, 1440]})
+        assert resp.status_code == 200
+        rows = db.query(TaskNotification).filter(
+            TaskNotification.task_id == resp.json()["id"]
+        ).all()
+        assert sorted(r.offset_minutes for r in rows) == [0, 60, 1440]
+
+    def test_past_time_guard_uses_deadline_at(self, client, db):
+        # A deadline two hours away with a "1 day before" reminder is already
+        # past its fire time, so the row must be stamped rather than fire at once.
+        soon = (datetime.now() + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S")
+        resp = client.post(
+            "/tasks/",
+            json={**DEADLINE, "deadline_at": soon, "notification_offsets": [1440, 30]},
+        )
+        assert resp.status_code == 200
+        rows = {
+            r.offset_minutes: r
+            for r in db.query(TaskNotification).filter(
+                TaskNotification.task_id == resp.json()["id"]
+            ).all()
+        }
+        assert rows[1440].sent_at is not None, "past-time reminder should be pre-stamped"
+        assert rows[30].sent_at is None, "future reminder should still be pending"
+
+
+class TestDescribeLead:
+    @pytest.mark.parametrize("minutes,expected", [
+        (1, "In 1 minute"),
+        (15, "In 15 minutes"),
+        (59, "In 59 minutes"),
+        (60, "In 1 hour"),
+        (90, "In 1 hour 30 min"),
+        (120, "In 2 hours"),
+        (1440, "In 1 day"),
+        (2880, "In 2 days"),
+        (1500, "In 1 day 1h"),
+    ])
+    def test_reads_the_way_a_person_would_say_it(self, minutes, expected):
+        assert scheduler_service._describe_lead(minutes) == expected

@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from sqlalchemy import and_, or_
 
 from app.config import settings
 from app.database import SessionLocal
@@ -72,12 +73,42 @@ def _check_appointment_notifications(db):
             db.commit()
 
 
+def _describe_lead(minutes: int) -> str:
+    """
+    Render a lead time the way a person would say it.
+
+    An offset is stored in minutes, but a two-day reminder reading
+    "In 2880 minutes" tells Ross nothing he can act on.
+    """
+    if minutes < 60:
+        return f"In {minutes} minute{'s' if minutes != 1 else ''}"
+    if minutes < 1440:
+        hours = minutes // 60
+        rest = minutes % 60
+        text = f"In {hours} hour{'s' if hours != 1 else ''}"
+        if rest:
+            text += f" {rest} min"
+        return text
+    days = minutes // 1440
+    rest_hours = (minutes % 1440) // 60
+    text = f"In {days} day{'s' if days != 1 else ''}"
+    if rest_hours:
+        text += f" {rest_hours}h"
+    return text
+
+
 def _check_task_notifications(db):
     """
     Fire user-configured per-task notifications (app.models.task_notification).
 
     Additive to the automatic appointment reminder above — a task can have
-    both. Each row fires once, at scheduled_at - offset_minutes.
+    both. Each row fires once, at the task's notification anchor minus
+    offset_minutes.
+
+    The anchor is scheduled_at for an appointment and deadline_at for a
+    deadline (see Task.notification_anchor). Before 2026-09-16 this only ever
+    read scheduled_at, so deadlines could never notify: 14 of Ross's 20 dated
+    pending tasks were silently excluded.
     """
     from app.models.task import Task
     from app.models.task_notification import TaskNotification
@@ -93,22 +124,30 @@ def _check_task_notifications(db):
         .join(Task, TaskNotification.task_id == Task.id)
         .filter(
             Task.status == "pending",
-            Task.scheduled_at.isnot(None),
             TaskNotification.sent_at.is_(None),
+            or_(
+                and_(Task.type == "appointment", Task.scheduled_at.isnot(None)),
+                and_(Task.type == "deadline", Task.deadline_at.isnot(None)),
+            ),
         )
         .all()
     )
 
     for notification in notifications:
         task = notification.task
-        fire_at = task.scheduled_at - timedelta(minutes=notification.offset_minutes)
+        anchor = task.notification_anchor
+        if anchor is None:
+            continue
+        fire_at = anchor - timedelta(minutes=notification.offset_minutes)
 
         if fire_at <= now:
             if notification.offset_minutes == 0:
-                body = "Now"
+                body = "Due now" if task.type == "deadline" else "Now"
             else:
-                mins_until = max(0, int((task.scheduled_at - now).total_seconds() / 60))
-                body = f"In {mins_until} minutes"
+                mins_until = max(0, int((anchor - now).total_seconds() / 60))
+                body = _describe_lead(mins_until)
+                if task.type == "deadline":
+                    body += " (due)"
             if task.location:
                 body += f" — {task.location}"
 

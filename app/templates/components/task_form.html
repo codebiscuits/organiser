@@ -108,7 +108,7 @@
         return ['errand', 'recurring', 'variable_recurring', 'workout'].includes(this.form.type);
     },
     addNotificationRow() {
-        this.notificationRows.push({ mode: 'at', minutes: 15 });
+        this.notificationRows.push({ mode: 'before', amount: 15, unit: 'minutes' });
     },
     removeNotificationRow(index) {
         this.notificationRows.splice(index, 1);
@@ -134,9 +134,9 @@
             payload.scheduled_at = this.form.scheduled_at;
             payload.prep_duration = this.form.prep_duration;
             payload.location = this.form.location || null;
-            payload.notification_offsets = this.notificationRows.map(
-                r => r.mode === 'at' ? 0 : Math.max(0, r.minutes || 0)
-            );
+        }
+        if (['appointment', 'deadline'].includes(this.form.type)) {
+            payload.notification_offsets = this.notificationRows.map(notificationRowToOffset);
         }
         if (['deadline', 'errand'].includes(this.form.type)) {
             payload.planning_window_days = this.form.planning_window_days;

@@ -133,6 +133,30 @@ async function fetchTitleDuplicate(title, excludeId) {
     }
 }
 
+// --- Notification rows -------------------------------------------------
+// A notification is stored as a single integer, offset_minutes, counted back
+// from the task's anchor (scheduled_at for an appointment, deadline_at for a
+// deadline). The form works in minutes/hours/days, so these two convert
+// between the stored integer and what the user picked. Shared by the create
+// and edit forms so the two can never drift apart.
+
+const NOTIFICATION_UNIT_MINUTES = { minutes: 1, hours: 60, days: 1440 };
+
+function notificationRowToOffset(row) {
+    if (row.mode === 'at') return 0;
+    const per = NOTIFICATION_UNIT_MINUTES[row.unit] || 1;
+    return Math.max(0, Math.round((row.amount || 0) * per));
+}
+
+function offsetToNotificationRow(offset) {
+    if (!offset) return { mode: 'at', amount: 15, unit: 'minutes' };
+    // Show the largest unit the offset divides into cleanly, so "120" comes
+    // back as "2 hours" rather than "120 minutes".
+    if (offset % 1440 === 0) return { mode: 'before', amount: offset / 1440, unit: 'days' };
+    if (offset % 60 === 0) return { mode: 'before', amount: offset / 60, unit: 'hours' };
+    return { mode: 'before', amount: offset, unit: 'minutes' };
+}
+
 // Alpine.js countdown component for deadline tasks
 document.addEventListener('alpine:init', () => {
     Alpine.data('countdown', (deadline) => ({

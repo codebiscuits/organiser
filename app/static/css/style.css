@@ -1494,15 +1494,24 @@ main {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    /* Four controls (mode, amount, unit, remove) do not fit on a phone in one
+       line, so the row is allowed to wrap rather than squash them. */
+    flex-wrap: wrap;
 }
 
 .notification-row .notification-mode {
     flex: 1;
+    min-width: 8rem;
 }
 
 .notification-row .notification-minutes {
     width: 5.5rem;
     flex: none;
+}
+
+.notification-row .notification-unit {
+    flex: 1;
+    min-width: 7.5rem;
 }
 
 .btn-icon-remove {
