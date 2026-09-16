@@ -1,35 +1,37 @@
 <div class="modal-overlay" x-data="{
     submitting: false,
-    selectedDays: {{ recurrence.day_of_week.split(',') if recurrence and recurrence.day_of_week else [] | tojson }},
-    allowedDays: {{ task.allowed_days.split(',') if task.allowed_days else [] | tojson }},
-    selectedTagIds: {{ task_tag_ids | map('string') | list | tojson }},
-    notificationRows: {{ task.notification_offsets | tojson }}.map(offsetToNotificationRow),
+    // `x-data` is an HTML attribute. JSON plus forceescape makes server data
+    // safe after the browser decodes the attribute, including apostrophes.
+    selectedDays: {{ (recurrence.day_of_week.split(',') if recurrence and recurrence.day_of_week else []) | tojson | forceescape }},
+    allowedDays: {{ (task.allowed_days.split(',') if task.allowed_days else []) | tojson | forceescape }},
+    selectedTagIds: {{ task_tag_ids | map('string') | list | tojson | forceescape }},
+    notificationRows: {{ task.notification_offsets | tojson | forceescape }}.map(offsetToNotificationRow),
     titleDuplicateWarning: false,
     async checkTitleDuplicate() {
-        this.titleDuplicateWarning = await fetchTitleDuplicate(this.form.title, '{{ task.id }}');
+        this.titleDuplicateWarning = await fetchTitleDuplicate(this.form.title, {{ task.id | tojson | forceescape }});
     },
     form: {
-        type: '{{ task.type }}',
-        title: '{{ task.title | e }}',
-        notes: '{{ task.notes | e if task.notes else '' }}',
-        estimated_duration: {{ task.estimated_duration or 'null' }},
-        importance: {{ task.importance or 2 }},
-        urgency: {{ task.urgency or 2 }},
+        type: {{ task.type | tojson | forceescape }},
+        title: {{ task.title | tojson | forceescape }},
+        notes: {{ (task.notes or '') | tojson | forceescape }},
+        estimated_duration: {{ task.estimated_duration if task.estimated_duration is not none else 'null' }},
+        importance: {{ task.importance if task.importance is not none else 2 }},
+        urgency: {{ task.urgency if task.urgency is not none else 2 }},
         allow_afternoon: {{ 'true' if task.allow_afternoon else 'false' }},
-        deadline_at: {{ ('\"' ~ task.deadline_at.strftime('%Y-%m-%dT%H:%M') ~ '\"') if task.deadline_at else 'null' }},
+        deadline_at: {{ (task.deadline_at.strftime('%Y-%m-%dT%H:%M') if task.deadline_at else none) | tojson | forceescape }},
         planning_window_days: {{ task.planning_window_days if task.planning_window_days is not none else 'null' }},
-        scheduled_at: {{ ('\"' ~ task.scheduled_at.strftime('%Y-%m-%dT%H:%M') ~ '\"') if task.scheduled_at else 'null' }},
-        prep_duration: {{ task.prep_duration or 'null' }},
-        scheduled_time: {{ ('\"' ~ task.scheduled_time ~ '\"') if task.scheduled_time else 'null' }},
-        location: '{{ task.location | e if task.location else '' }}',
+        scheduled_at: {{ (task.scheduled_at.strftime('%Y-%m-%dT%H:%M') if task.scheduled_at else none) | tojson | forceescape }},
+        prep_duration: {{ task.prep_duration if task.prep_duration is not none else 'null' }},
+        scheduled_time: {{ (task.scheduled_time.strftime('%H:%M') if task.scheduled_time else none) | tojson | forceescape }},
+        location: {{ (task.location or '') | tojson | forceescape }},
         recurrence: {
-            interval_type: '{{ recurrence.interval_type if recurrence else 'daily' }}',
+            interval_type: {{ (recurrence.interval_type if recurrence else 'daily') | tojson | forceescape }},
             interval_multiple: {{ recurrence.interval_multiple if recurrence else 1 }},
-            day_of_week: {{ ('\"' ~ recurrence.day_of_week ~ '\"') if recurrence and recurrence.day_of_week else 'null' }},
-            day_of_month: {{ recurrence.day_of_month or 'null' }},
-            month_of_year: {{ recurrence.month_of_year or 'null' }},
-            start_date: {{ ('\"' ~ recurrence.start_date.strftime('%Y-%m-%d') ~ '\"') if recurrence and recurrence.start_date else 'todayIsoDate()' }},
-            end_date: {{ ('\"' ~ recurrence.end_date.strftime('%Y-%m-%d') ~ '\"') if recurrence and recurrence.end_date else 'null' }}
+            day_of_week: {{ (recurrence.day_of_week if recurrence and recurrence.day_of_week else none) | tojson | forceescape }},
+            day_of_month: {{ (recurrence.day_of_month if recurrence and recurrence.day_of_month else none) | tojson | forceescape }},
+            month_of_year: {{ (recurrence.month_of_year if recurrence and recurrence.month_of_year else none) | tojson | forceescape }},
+            start_date: {{ (recurrence.start_date.strftime('%Y-%m-%d') if recurrence and recurrence.start_date else none) | tojson | forceescape }} || todayIsoDate(),
+            end_date: {{ (recurrence.end_date.strftime('%Y-%m-%d') if recurrence and recurrence.end_date else none) | tojson | forceescape }}
         }
     },
     showUrgency() {

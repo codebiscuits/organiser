@@ -145,6 +145,30 @@ class TestCreateTask:
         assert 'id="planning_window_days"' in response.text
         assert "Show in daily list" in response.text
 
+    def test_edit_form_safely_embeds_apostrophes_in_alpine_state(self, client, db):
+        """A task with apostrophes must still initialise its edit modal state."""
+        import html
+        import re
+
+        task = create_task(client, {
+            **APPOINTMENT_PAYLOAD,
+            "title": "Dentist's appointment",
+            "notes": "Bring daughter's medical card",
+            "location": "St Mary's surgery",
+        })
+
+        response = client.get(f"/tasks/{task['id']}/edit")
+        assert response.status_code == 200
+        alpine_data = html.unescape(re.search(r'x-data="(.*?)"', response.text, re.DOTALL).group(1))
+
+        # JSON's unicode escapes keep the single-quoted HTML attribute and
+        # Alpine expression syntactically valid after the browser decodes it.
+        assert 'title: "Dentist\\u0027s appointment"' in alpine_data
+        assert 'notes: "Bring daughter\\u0027s medical card"' in alpine_data
+        assert 'location: "St Mary\\u0027s surgery"' in alpine_data
+        assert '@click="closeModal()"' in response.text
+        assert 'Update Task' in response.text
+
     def test_create_recurring_generates_projections(self, client, db):
         data = create_task(client, RECURRING_PAYLOAD)
         task_id = data["id"]
