@@ -10,7 +10,7 @@ uv run uvicorn app.main:app --reload --port 8888  # http://localhost:8888
 uv run pytest                                  # run tests
 ```
 
-Database auto-creates on first run (`organiser.db` in project root). No migrations — SQLAlchemy `create_all` handles schema.
+Database auto-creates on first run (`organiser.db` in project root). SQLAlchemy `create_all` creates missing tables. Changes to existing tables go in the `run_migrations()` list in `app/database.py`, which runs every statement on each startup and ignores statements that fail (for example, a column that already exists).
 
 ---
 
@@ -73,7 +73,8 @@ estimated_duration  INT       minutes
 importance      INT           1-3
 urgency         INT           1-3 | NULL (deadlines: calculated; others: manual)
 allow_afternoon BOOL          can be auto-scheduled in 3pm-6pm window
-deadline_at     DATETIME      for type=deadline
+deadline_at     DATETIME      for type=deadline; errands also get one (see deadline_auto)
+deadline_auto   BOOL          True: deadline_at was auto-set on an errand; never pinned or swept
 planning_window_days INT      optional: show deadline/errand this many days before due date (NULL = immediately)
 scheduled_at    DATETIME      for type=appointment (exact time)
 prep_duration   INT           minutes; for appointments; triggers auto-prep task creation
@@ -81,7 +82,14 @@ scheduled_time  TIME          optional fixed daily time for recurring tasks (mak
 location        TEXT
 status          TEXT          pending | active | completed | deferred
 deferred_count  INT           incremented on defer; used as tie-breaker
+snooze_until    TEXT          YYYY-MM-DD; task hidden until this date
 manual_scheduled_time DATETIME user-set time from timeline drag-and-drop
+preset_id       INT           FK → task_presets.id, NULL if not created from a preset
+allowed_days    TEXT          comma-separated day indices, Sun=0
+generated_from_task_id TEXT   id of the task this one was auto-generated from (prep tasks); no FK, parent may be deleted
+push_notified_at DATETIME     set when the appointment reminder push is sent; NULL = not yet sent
+created_at      DATETIME
+updated_at      DATETIME
 ```
 
 ### recurrence
@@ -89,6 +97,7 @@ manual_scheduled_time DATETIME user-set time from timeline drag-and-drop
 One row per recurring/variable_recurring/workout task.
 
 ```
+id              INT           PK
 task_id         TEXT          FK → tasks.id
 interval_type   TEXT          daily | weekly | monthly | yearly
 interval_multiple INT         e.g. 2 = every 2 weeks
@@ -97,6 +106,8 @@ day_of_month    TEXT          "1,15" = 1st and 15th
 month_of_year   TEXT          "3,9" = Mar and Sep
 start_date      DATE
 end_date        DATE          NULL = no end
+created_at      DATETIME
+updated_at      DATETIME
 ```
 
 ### projection
@@ -104,13 +115,27 @@ end_date        DATE          NULL = no end
 Pre-computed future occurrences of recurring tasks. Generated 90 days ahead.
 
 ```
+instance_id     INT           PK
 task_id         TEXT          FK → tasks.id
 due_date        DATE
+created_at      DATETIME
+updated_at      DATETIME
 UNIQUE(task_id, due_date)
 ```
 
 Completing a recurring task deletes today's projection row (task persists).  
 Deferring moves today's projection to `today + 1`.
+
+### projection_exclusion
+
+Dates deliberately removed from a recurrence ("delete today only", week-view instance delete). Projection rows are hard-deleted, so regeneration (`refresh_projections`, task creation, admin regenerate) reads this table to avoid recreating them.
+
+```
+id              INT           PK
+task_id         TEXT          FK → tasks.id
+due_date        DATE
+created_at      DATETIME
+```
 
 ### workout tables
 
@@ -141,6 +166,7 @@ task_id, task_title,
 task_snapshot (JSON of task row before the action),
 recurrence_snapshot (JSON, delete only),
 projections_snapshot (JSON array of due_date strings before the action),
+exclusions_snapshot (JSON array of projection_exclusion due_date strings, delete only),
 completed_task_id (FK -> completed_tasks.id, complete actions),
 performed_set_id (FK -> performed_sets.id, workout completions),
 performed_at
@@ -151,7 +177,7 @@ performed_at
 Single-user. Auto-created on first `/admin/user` visit.
 
 ```
-id, email, push_subscription (JSON — dead column, unused; real store is the push_subscriptions table), available_hours_per_day (default 6), preferences (JSON)
+id (TEXT UUID), email, push_subscription (JSON — dead column, unused; real store is the push_subscriptions table), available_hours_per_day (default 6), preferences (JSON), created_at
 ```
 
 ### push_subscriptions
@@ -168,6 +194,24 @@ User-configured per-task push notifications, stored as offsets so rescheduling a
 
 ```
 id, task_id (FK tasks, cascade), offset_minutes (0 = at scheduled time, N = N min before), sent_at (null until fired)
+```
+
+### task_presets
+
+Saved templates for creating tasks. Holds the task fields plus recurrence fields; `tasks.preset_id` points here.
+
+```
+id, name, type, title, notes, estimated_duration, importance, urgency, allow_afternoon,
+deadline_at, scheduled_at, prep_duration, scheduled_time, location,
+interval_type, interval_multiple (default 1), day_of_week, day_of_month, month_of_year,
+allowed_days, created_at, updated_at
+```
+
+### tags / task_tags
+
+```
+tags:       id, name, icon (default "tag"), color (default "#7eb8d4")
+task_tags:  task_id FK → tasks.id, tag_id FK → tags.id  (junction, composite PK)
 ```
 
 ---
@@ -353,7 +397,7 @@ Be aware of these gaps when making changes:
 - **Pydantic v2:** Models use `model_dump(exclude_unset=True)` for partial updates.
 - **HTML responses:** Use `response_class=HTMLResponse` on routes returning templates. Return `Response(status_code=200, headers={"HX-Trigger": "taskUpdated"})` for mutation endpoints that don't return HTML.
 - **Admin routes:** Use form POST + `RedirectResponse(303)` pattern, not HTMX.
-- **Template context:** Always include `"request": request` in template context.
+- **Templates:** Pass `request` as the first positional argument: `templates.TemplateResponse(request, "name.html", context)`.
 
 ---
 
@@ -363,7 +407,7 @@ Be aware of these gaps when making changes:
 uv run pytest
 ```
 
-Tests live in `tests/` (4 files: `test_api.py`, `test_prioritisation.py`, `test_recurrence.py`, `test_workout_algorithm.py`). Uses pytest with an in-memory SQLite DB (`conftest.py` provides `db` and `client` fixtures).
+Tests live in `tests/` (`test_api.py`, `test_prioritisation.py`, `test_push.py`, `test_recurrence.py`, `test_workout_algorithm.py`). Uses pytest with an in-memory SQLite DB (`conftest.py` provides `db` and `client` fixtures).
 
 ---
 
@@ -373,7 +417,7 @@ Tests live in `tests/` (4 files: `test_api.py`, `test_prioritisation.py`, `test_
 1. Add column to `app/models/task.py`
 2. Add to `TaskCreate`/`TaskUpdate`/`TaskResponse` in `app/schemas/task.py`
 3. Update admin task form in `app/routers/admin.py` and `app/templates/admin/task_form.html`
-4. Drop and recreate DB (no migrations), or use `ALTER TABLE` manually
+4. Append an `ALTER TABLE tasks ADD COLUMN ...` statement to the `run_migrations()` list in `app/database.py`
 
 **Change scheduling window hours:**
 Update `app/config.py` — the settings values propagate everywhere via `settings` import.
