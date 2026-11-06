@@ -6,3 +6,8 @@ __pycache__/
 .env
 app/templates/base.sync-conflict-*.html
 .env.bak
+
+# TLS certificate and private key for Tailscale HTTPS, kept in the live folder on fileserver
+*.crt
+*.key
+*.pem
