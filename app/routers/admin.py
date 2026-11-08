@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.models.recurrence import Projection, Recurrence
-from app.services.recurrence import generate_projections, refresh_projections, delete_task_children
+from app.services.recurrence import generate_projections, refresh_projections, delete_task_children, rebuild_future_projections
+from app.services.undo import recurrence_to_dict
 from datetime import timedelta
 from app.models.task import CompletedTask, Task
 from app.models.preset import TaskPreset
@@ -240,6 +241,7 @@ async def admin_task_update(
 
     if type in ("recurring", "variable_recurring", "workout") and interval_type:
         if existing_recurrence:
+            previous_rule = recurrence_to_dict(existing_recurrence)
             existing_recurrence.interval_type = interval_type
             existing_recurrence.interval_multiple = interval_multiple or 1
             existing_recurrence.day_of_week = ",".join(day_of_week) if day_of_week else None
@@ -248,6 +250,7 @@ async def admin_task_update(
             existing_recurrence.start_date = date.fromisoformat(start_date) if start_date else None
             existing_recurrence.end_date = date.fromisoformat(end_date) if end_date else None
             recurrence = existing_recurrence
+            rule_changed = recurrence_to_dict(recurrence) != previous_rule
         else:
             recurrence = Recurrence(
                 task_id=task.id,
@@ -260,14 +263,11 @@ async def admin_task_update(
                 end_date=date.fromisoformat(end_date) if end_date else None,
             )
             db.add(recurrence)
+            rule_changed = True
         
         db.flush()
-        db.query(Projection).filter(Projection.task_id == task_id).delete()
-        start = recurrence.start_date or date.today()
-        end = start + timedelta(days=90)
-        projections = generate_projections(db, recurrence, start, end)
-        for projection in projections:
-            db.add(projection)
+        if rule_changed:
+            rebuild_future_projections(db, recurrence, type)
     elif existing_recurrence:
         # Switching away from a recurring type: tear down Recurrence AND
         # Projection AND ProjectionExclusion. Leaving exclusion tombstones

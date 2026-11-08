@@ -25,7 +25,7 @@ from app.schemas.task import (
 )
 from app.models.workout import PerformedSet
 from app.services.workout_algorithm import select_todays_exercises, get_todays_intensity
-from app.services.recurrence import generate_projections, delete_task_children
+from app.services.recurrence import generate_projections, delete_task_children, rebuild_future_projections
 from app.services.prioritisation import get_prioritised_tasks_with_metadata
 
 router = APIRouter()
@@ -1483,6 +1483,7 @@ async def update_task(task_id: str, task_data: TaskUpdate, response: Response, d
     if task_data.recurrence:
         existing_recurrence = db.query(Recurrence).filter(Recurrence.task_id == task_id).first()
         if existing_recurrence:
+            previous_rule = recurrence_to_dict(existing_recurrence)
             existing_recurrence.interval_type = task_data.recurrence.interval_type
             existing_recurrence.interval_multiple = task_data.recurrence.interval_multiple
             existing_recurrence.day_of_week = task_data.recurrence.day_of_week
@@ -1490,8 +1491,12 @@ async def update_task(task_id: str, task_data: TaskUpdate, response: Response, d
             existing_recurrence.month_of_year = task_data.recurrence.month_of_year
             if task_data.recurrence.start_date:
                 existing_recurrence.start_date = task_data.recurrence.start_date.date()
-            if task_data.recurrence.end_date:
-                existing_recurrence.end_date = task_data.recurrence.end_date.date()
+            if "end_date" in task_data.recurrence.model_fields_set:
+                existing_recurrence.end_date = (
+                    task_data.recurrence.end_date.date() if task_data.recurrence.end_date else None
+                )
+            if recurrence_to_dict(existing_recurrence) != previous_rule:
+                rebuild_future_projections(db, existing_recurrence, task.type)
         else:
             # Task had no recurrence row before (e.g. it's newly recurring
             # via a same-type edit that only just added a recurrence).

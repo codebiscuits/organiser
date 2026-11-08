@@ -96,6 +96,33 @@ def generate_projections(
     return projections
 
 
+def rebuild_future_projections(db: Session, recurrence: Recurrence, task_type: str) -> None:
+    """Replace this rule's projections from today, preserving history and exclusions.
+
+    Leave the commit to the caller so the rule and its projections change
+    atomically. Match the initial 90-day window, anchored at the later of
+    today and start_date, and respect the rule's end_date. Variable recurring
+    tasks retain their single-next-occurrence semantics, not a daily pattern.
+    """
+    today = date.today()
+    db.query(Projection).filter(
+        Projection.task_id == recurrence.task_id,
+        Projection.due_date >= today,
+    ).delete()
+    start = max(today, recurrence.start_date) if recurrence.start_date else today
+    end = start + timedelta(days=90)
+    if recurrence.end_date:
+        end = min(end, recurrence.end_date)
+    if task_type == "variable_recurring":
+        excluded = db.query(ProjectionExclusion).filter_by(
+            task_id=recurrence.task_id, due_date=start,
+        ).first()
+        if start <= end and not excluded:
+            db.add(Projection(task_id=recurrence.task_id, due_date=start))
+    else:
+        db.add_all(generate_projections(db, recurrence, start, end))
+
+
 def delete_task_children(db: Session, task_id: str) -> None:
     """
     Delete a task's Projection, ProjectionExclusion, and Recurrence rows.
