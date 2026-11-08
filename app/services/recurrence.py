@@ -1,7 +1,8 @@
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from app.models.recurrence import Recurrence, Projection, ProjectionExclusion
+from app.models.task import CompletedTask
 
 
 def parse_day_list(day_string: str | None) -> list[int]:
@@ -113,14 +114,37 @@ def rebuild_future_projections(db: Session, recurrence: Recurrence, task_type: s
     end = start + timedelta(days=90)
     if recurrence.end_date:
         end = min(end, recurrence.end_date)
+    done_today = _completed_today(db, recurrence.task_id, today)
     if task_type == "variable_recurring":
         excluded = db.query(ProjectionExclusion).filter_by(
             task_id=recurrence.task_id, due_date=start,
         ).first()
-        if start <= end and not excluded:
+        if start <= end and not excluded and not (done_today and start == today):
             db.add(Projection(task_id=recurrence.task_id, due_date=start))
     else:
-        db.add_all(generate_projections(db, recurrence, start, end))
+        db.add_all(
+            p for p in generate_projections(db, recurrence, start, end)
+            if not (done_today and p.due_date == today)
+        )
+
+
+def _completed_today(db: Session, task_id: str, today: date) -> bool:
+    """True if the user completed this task today.
+
+    Completing a recurring task deletes today's Projection. A rebuild must not
+    put it back, or the finished task reappears on today's list. completed_at
+    is stored in UTC by SQLite's now(), so compare against local midnight
+    converted to naive UTC. Overdue-sweep completions close past occurrences,
+    not today's, so they do not count.
+    """
+    midnight_utc = (
+        datetime.combine(today, time.min).astimezone(timezone.utc).replace(tzinfo=None)
+    )
+    return db.query(CompletedTask).filter(
+        CompletedTask.task_id == task_id,
+        CompletedTask.completed_at >= midnight_utc,
+        CompletedTask.auto_completed.isnot(True),
+    ).first() is not None
 
 
 def delete_task_children(db: Session, task_id: str) -> None:

@@ -180,3 +180,45 @@ def test_changing_days_without_changing_interval_type(client, db, path, original
     task_id, rule = create_recurring(client, start_date=TODAY.isoformat(), **original)
     update_rule(client, path, task_id, "recurring", {**rule, **changes})
     assert projection_dates(db, task_id) == expected
+
+
+def complete_today(client, db, task_id, auto=False):
+    """Complete the task, then pin completed_at to TODAY (the fixture's date)."""
+    from datetime import datetime
+    from app.models.task import CompletedTask
+
+    response = client.post(f"/tasks/{task_id}/complete")
+    assert response.status_code == 200, response.text
+    db.expire_all()
+    row = (db.query(CompletedTask).filter_by(task_id=task_id)
+           .order_by(CompletedTask.id.desc()).first())
+    row.completed_at = datetime(TODAY.year, TODAY.month, TODAY.day, 10, 0)
+    row.auto_completed = auto
+    db.query(Projection).filter_by(task_id=task_id, due_date=TODAY).delete()
+    db.commit()
+
+
+@pytest.mark.parametrize("path", ["api", "form"])
+@pytest.mark.parametrize("task_type", ["recurring", "variable_recurring"])
+def test_rule_edit_does_not_bring_back_an_occurrence_completed_today(client, db, path, task_type):
+    # Added in Claude's review of the Hermes run: completing deletes today's
+    # projection, and a same-day rule edit must not regenerate it.
+    task_id, rule = create_recurring(client, task_type)
+    complete_today(client, db, task_id)
+    if task_type == "variable_recurring":
+        # Completion may prompt for a next date; the next projection is not today.
+        db.query(Projection).filter_by(task_id=task_id).delete()
+        db.commit()
+    update_rule(client, path, task_id, task_type, {**rule, "start_date": "2026-09-17"})
+    db.expire_all()
+    assert TODAY not in projection_dates(db, task_id)
+    if task_type == "recurring":
+        assert TODAY + timedelta(days=1) in projection_dates(db, task_id)
+
+
+def test_overdue_sweep_completion_does_not_hide_today(client, db):
+    task_id, rule = create_recurring(client)
+    complete_today(client, db, task_id, auto=True)
+    update_rule(client, "api", task_id, "recurring", {**rule, "start_date": "2026-09-17"})
+    db.expire_all()
+    assert TODAY in projection_dates(db, task_id)
